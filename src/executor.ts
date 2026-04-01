@@ -1,12 +1,12 @@
 import { handleAssertTask } from "./handlers/assert-handler";
 import { handleBrowserTask, TaskExecutionOutput } from "./handlers/browser-handler";
+import { handleCodeTask } from "./handlers/code-handler";
 import { handleShellTask } from "./handlers/shell-handler";
 import { handleVisionTask } from "./handlers/vision-handler";
 import { Logger } from "./logger";
 import { captureRetryFailureArtifact, getRetryPolicy, waitBeforeRetry } from "./retry";
 import { AgentTask, RunContext } from "./types";
 import { getActionHandler } from "./plugins/registry";
-import { publishEvent } from "./streaming/event-bus";
 
 export async function executeTask(
   context: RunContext,
@@ -22,30 +22,11 @@ export async function executeTask(
     task.errorHistory ??= [];
 
     try {
-      publishEvent({
-        type: "task_start",
-        runId: context.runId,
-        taskId: task.id,
-        taskType: task.type,
-        timestamp: new Date().toISOString(),
-        payload: task.payload as Record<string, unknown>
-      });
-
       const output = await dispatchTask(context, task, logger);
       task.status = "done";
       task.endedAt = new Date().toISOString();
       task.durationMs = calculateDurationMs(task.startedAt, task.endedAt);
       task.error = undefined;
-
-      publishEvent({
-        type: "task_done",
-        runId: context.runId,
-        taskId: task.id,
-        timestamp: new Date().toISOString(),
-        summary: output.summary,
-        durationMs: task.durationMs
-      });
-
       return output;
     } catch (error) {
       const message = getErrorMessage(error);
@@ -67,15 +48,6 @@ export async function executeTask(
       task.status = "failed";
       task.endedAt = new Date().toISOString();
       task.durationMs = calculateDurationMs(task.startedAt, task.endedAt);
-
-      publishEvent({
-        type: "task_failed",
-        runId: context.runId,
-        taskId: task.id,
-        timestamp: new Date().toISOString(),
-        error: message
-      });
-
       throw error;
     }
   }
@@ -94,6 +66,10 @@ async function dispatchTask(
       context.artifacts.push({ ...artifact, taskId: task.id });
     }
     return { summary: output.summary };
+  }
+
+  if (task.type === "run_code") {
+    return handleCodeTask(context, task);
   }
 
   if (task.type === "assert_text") {

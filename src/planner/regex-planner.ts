@@ -171,6 +171,15 @@ function parseBlueprint(part: string): TaskBlueprint | null {
     return { type: "stop_app", payload: {} };
   }
 
+  // run_code: run javascript|python|shell code "..."
+  const codeLanguage = /run\s+(javascript|python|shell)\s+code/i.test(part)
+    ? (part.match(/run\s+(javascript|python|shell)\s+code/i)?.[1]?.toLowerCase() ?? "javascript")
+    : null;
+  const codeSnippet = extractQuotedValue(part, /run\s+(?:javascript|python|shell)\s+code\s+"([^"]+)"/i);
+  if (codeLanguage && codeSnippet) {
+    return { type: "run_code", payload: { language: codeLanguage, code: codeSnippet } };
+  }
+
   return null;
 }
 

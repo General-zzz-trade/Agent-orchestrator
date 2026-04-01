@@ -260,6 +260,17 @@
       </div>
     </div>
 
+    <!-- Clarification panel (hidden by default) -->
+    <div id="clarify-panel" style="display:none;padding:14px;border-bottom:1px solid var(--border);background:#1a1505;">
+      <div style="font-size:11px;color:var(--yellow);margin-bottom:8px;font-weight:600;">⚠ 需要澄清</div>
+      <div id="clarify-question" style="font-size:12px;color:var(--text);margin-bottom:10px;line-height:1.5;"></div>
+      <textarea id="clarify-answer" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--font);font-size:12px;padding:8px;resize:none;height:60px;outline:none;" placeholder="输入你的答案..."></textarea>
+      <div style="margin-top:8px;display:flex;gap:8px;">
+        <button class="btn btn-primary btn-sm" onclick="submitClarification()">确认</button>
+        <button class="btn btn-ghost btn-sm" onclick="dismissClarification()">取消</button>
+      </div>
+    </div>
+
     <div class="panel-header">
       History
       <button class="btn btn-ghost btn-sm" style="float:right;margin-top:-2px" onclick="loadHistory()">刷新</button>
@@ -298,6 +309,7 @@
 
 <script>
   let currentRunId = null;
+  let pendingClarificationRunId = null;
   let currentSSE = null;
   let apiBase = window.location.origin;
 
@@ -345,6 +357,16 @@
       }
       const data = await resp.json();
       currentRunId = data.runId;
+
+      if (data.status === 'needs_clarification') {
+        pendingClarificationRunId = data.runId;
+        document.getElementById('clarify-question').textContent = data.question;
+        document.getElementById('clarify-panel').style.display = '';
+        document.getElementById('clarify-answer').focus();
+        addEvent({ type: 'log', message: `Agent 需要澄清: ${data.question}`, timestamp: new Date().toISOString() });
+        return;
+      }
+
       document.getElementById('center-title').textContent = `实时画面 — ${currentRunId}`;
       openStream(currentRunId);
       setTimeout(loadHistory, 500);
@@ -354,6 +376,30 @@
       btn.disabled = false;
       btn.textContent = '运行';
     }
+  }
+
+  // ── Clarification ──
+  async function submitClarification() {
+    const answer = document.getElementById('clarify-answer').value.trim();
+    if (!answer || !pendingClarificationRunId) return;
+    try {
+      const resp = await fetch(`${apiBase}/api/v1/runs/${pendingClarificationRunId}/clarify`, {
+        method: 'POST', headers: getHeaders(), body: JSON.stringify({ answer })
+      });
+      const data = await resp.json();
+      dismissClarification();
+      currentRunId = data.runId;
+      document.getElementById('center-title').textContent = `实时画面 — ${currentRunId}`;
+      addEvent({ type: 'log', message: `目标已澄清，开始执行: ${data.enrichedGoal}`, timestamp: new Date().toISOString() });
+      openStream(currentRunId);
+      setTimeout(loadHistory, 500);
+    } catch(e) { addEvent({ type: 'error', message: e.message, timestamp: new Date().toISOString() }); }
+  }
+
+  function dismissClarification() {
+    pendingClarificationRunId = null;
+    document.getElementById('clarify-panel').style.display = 'none';
+    document.getElementById('clarify-answer').value = '';
   }
 
   // ── SSE Stream ──

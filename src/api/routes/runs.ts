@@ -3,6 +3,8 @@ import { listRuns, getRun } from "../../db/runs-repo";
 import { getRunStatus } from "../run-store";
 import { submitJob, getQueue } from "../../worker/pool";
 import { sanitizeGoal } from "../sanitize";
+import { detectAmbiguity } from "../../clarification/detector";
+import { storeClarification, answerClarification, deleteClarification } from "../../clarification/store";
 
 export async function runsRoutes(app: FastifyInstance): Promise<void> {
   // POST /runs — submit a goal (non-blocking, returns 202 immediately)
@@ -21,6 +23,19 @@ export async function runsRoutes(app: FastifyInstance): Promise<void> {
     const { goal: rawGoal, options = {} } = request.body;
     const goal = sanitizeGoal(rawGoal);
     if (!goal) return reply.code(400).send({ error: "goal is empty after sanitization" });
+
+    const clarification = detectAmbiguity(goal);
+    if (clarification.needed) {
+      const runId = `run-${new Date().toISOString().replace(/[:.]/g, "-")}-${Math.random().toString(36).slice(2, 8)}`;
+      storeClarification({ runId, originalGoal: goal, question: clarification.question!, askedAt: new Date().toISOString() });
+      return reply.code(200).send({
+        runId,
+        status: "needs_clarification",
+        question: clarification.question,
+        hint: `POST /api/v1/runs/${runId}/clarify with { "answer": "..." } to continue`
+      });
+    }
+
     const runId = `run-${new Date().toISOString().replace(/[:.]/g, "-")}-${Math.random().toString(36).slice(2, 8)}`;
     submitJob(runId, goal, options, request.tenantId);
     return reply.code(202).send({ runId, status: "pending", tenantId: request.tenantId });
@@ -72,6 +87,30 @@ export async function runsRoutes(app: FastifyInstance): Promise<void> {
     if (!run) return reply.code(404).send({ error: "Run not found" });
     return reply.send({ artifacts: run.artifacts });
   });
+
+  // POST /runs/:id/clarify — answer a clarification question to resume planning
+  app.post<{ Params: { id: string }; Body: { answer: string } }>(
+    "/runs/:id/clarify",
+    {
+      schema: {
+        body: {
+          type: "object",
+          required: ["answer"],
+          properties: { answer: { type: "string", minLength: 1, maxLength: 2000 } }
+        }
+      }
+    },
+    async (request, reply) => {
+      const { id } = request.params;
+      const { answer } = request.body;
+      const record = answerClarification(id, answer);
+      if (!record) return reply.code(404).send({ error: "Clarification request not found or already answered." });
+      const enrichedGoal = `${record.originalGoal} (clarification: ${answer})`;
+      deleteClarification(id);
+      submitJob(id, enrichedGoal, {}, request.tenantId);
+      return reply.code(202).send({ runId: id, status: "accepted", enrichedGoal });
+    }
+  );
 
   // GET /queue/stats — worker pool status
   app.get("/queue/stats", async (_request, reply) => {

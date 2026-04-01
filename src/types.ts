@@ -20,7 +20,9 @@ export type AgentAction =
   | "visual_click"
   | "visual_type"
   | "visual_assert"
-  | "visual_extract";
+  | "visual_extract"
+  // Code execution action — run JavaScript, Python, or shell scripts
+  | "run_code";
 
 export type GoalCategory = "explicit" | "semi-natural" | "ambiguous";
 export type EscalationStage = "planner" | "replanner" | "diagnoser";
