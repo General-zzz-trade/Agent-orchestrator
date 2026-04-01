@@ -171,13 +171,24 @@ function parseBlueprint(part: string): TaskBlueprint | null {
     return { type: "stop_app", payload: {} };
   }
 
-  // run_code: run javascript|python|shell code "..."
-  const codeLanguage = /run\s+(javascript|python|shell)\s+code/i.test(part)
-    ? (part.match(/run\s+(javascript|python|shell)\s+code/i)?.[1]?.toLowerCase() ?? "javascript")
-    : null;
-  const codeSnippet = extractQuotedValue(part, /run\s+(?:javascript|python|shell)\s+code\s+"([^"]+)"/i);
-  if (codeLanguage && codeSnippet) {
-    return { type: "run_code", payload: { language: codeLanguage, code: codeSnippet } };
+  // http_request: GET|POST "url"
+  const httpMethod = part.match(/\b(GET|POST|PUT|PATCH|DELETE)\b/i)?.[1]?.toUpperCase();
+  const httpUrl = extractQuotedValue(part, /(?:GET|POST|PUT|PATCH|DELETE)\s+"([^"]+)"/i) ?? extractUrl(part);
+  if (httpUrl && httpMethod) {
+    return { type: "http_request", payload: { url: httpUrl, method: httpMethod } };
+  }
+
+  // read_file: read file "path/to/file"
+  const readPath = extractQuotedValue(part, /read\s+file\s+"([^"]+)"/i);
+  if (readPath && /\bread\s+file\b/i.test(part)) {
+    return { type: "read_file", payload: { path: readPath } };
+  }
+
+  // write_file: write file "path" content "..."
+  const writePath = extractQuotedValue(part, /write\s+file\s+"([^"]+)"/i);
+  const writeContent = extractQuotedValue(part, /content\s+"([^"]+)"/i);
+  if (writePath && writeContent && /\bwrite\s+file\b/i.test(part)) {
+    return { type: "write_file", payload: { path: writePath, content: writeContent } };
   }
 
   return null;

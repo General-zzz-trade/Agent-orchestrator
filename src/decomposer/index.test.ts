@@ -30,12 +30,12 @@ test("'after that' separator: decomposed", () => {
   assert.equal(r.subGoals.length, 2);
 });
 
-test("summarizeDecomposition: single goal", () => {
+test("summarizeDecomposition: single goal passthrough", () => {
   const r = decomposeGoal("open http://example.com");
   assert.equal(summarizeDecomposition(r), "open http://example.com");
 });
 
-test("summarizeDecomposition: multi-step", () => {
+test("summarizeDecomposition: multi-step includes Step labels", () => {
   const r = decomposeGoal("open the app then click login");
   const summary = summarizeDecomposition(r);
   assert.ok(summary.includes("Step 1"));

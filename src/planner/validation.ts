@@ -18,6 +18,9 @@ const ALLOWED_PAYLOAD_FIELDS: Record<AgentAction, string[]> = {
   visual_type: ["description", "text"],
   visual_assert: ["assertion"],
   visual_extract: ["description"],
+  http_request: ["url", "method", "body", "headers", "timeoutMs"],
+  read_file: ["path", "maxLength"],
+  write_file: ["path", "content"],
   run_code: ["language", "code", "timeoutMs"]
 };
 
@@ -35,6 +38,9 @@ const REQUIRED_PAYLOAD_FIELDS: Partial<Record<AgentAction, string[]>> = {
   visual_type: ["description", "text"],
   visual_assert: ["assertion"],
   visual_extract: ["description"],
+  http_request: ["url"],
+  read_file: ["path"],
+  write_file: ["path", "content"],
   run_code: ["language", "code"]
 };
 

@@ -5,6 +5,7 @@ import { submitJob, getQueue } from "../../worker/pool";
 import { sanitizeGoal } from "../sanitize";
 import { detectAmbiguity } from "../../clarification/detector";
 import { storeClarification, answerClarification, deleteClarification } from "../../clarification/store";
+import { decomposeGoal, summarizeDecomposition } from "../../decomposer";
 
 export async function runsRoutes(app: FastifyInstance): Promise<void> {
   // POST /runs — submit a goal (non-blocking, returns 202 immediately)
@@ -37,8 +38,16 @@ export async function runsRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const runId = `run-${new Date().toISOString().replace(/[:.]/g, "-")}-${Math.random().toString(36).slice(2, 8)}`;
+    const decomposition = decomposeGoal(goal);
     submitJob(runId, goal, options, request.tenantId);
-    return reply.code(202).send({ runId, status: "pending", tenantId: request.tenantId });
+    return reply.code(202).send({
+      runId,
+      status: "pending",
+      tenantId: request.tenantId,
+      decomposition: decomposition.decomposed
+        ? { steps: decomposition.subGoals.length, preview: summarizeDecomposition(decomposition) }
+        : undefined
+    });
   });
 
   // GET /runs — list recent runs

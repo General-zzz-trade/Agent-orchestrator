@@ -1,6 +1,7 @@
 import { handleAssertTask } from "./handlers/assert-handler";
 import { handleBrowserTask, TaskExecutionOutput } from "./handlers/browser-handler";
-import { handleCodeTask } from "./handlers/code-handler";
+import { handleHttpTask } from "./handlers/http-handler";
+import { handleReadFileTask, handleWriteFileTask } from "./handlers/file-handler";
 import { handleShellTask } from "./handlers/shell-handler";
 import { handleVisionTask } from "./handlers/vision-handler";
 import { Logger } from "./logger";
@@ -68,10 +69,6 @@ async function dispatchTask(
     return { summary: output.summary };
   }
 
-  if (task.type === "run_code") {
-    return handleCodeTask(context, task);
-  }
-
   if (task.type === "assert_text") {
     return handleAssertTask(context, task, logger);
   }
@@ -79,6 +76,16 @@ async function dispatchTask(
   if (task.type === "visual_click" || task.type === "visual_type" ||
       task.type === "visual_assert" || task.type === "visual_extract") {
     return handleVisionTask(context, task, logger);
+  }
+
+  if (task.type === "http_request") {
+    return handleHttpTask(context, task);
+  }
+  if (task.type === "read_file") {
+    return handleReadFileTask(context, task);
+  }
+  if (task.type === "write_file") {
+    return handleWriteFileTask(context, task);
   }
 
   if (task.type === "start_app" || task.type === "wait_for_server" || task.type === "stop_app") {

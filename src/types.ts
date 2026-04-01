@@ -21,7 +21,10 @@ export type AgentAction =
   | "visual_type"
   | "visual_assert"
   | "visual_extract"
-  // Code execution action — run JavaScript, Python, or shell scripts
+  | "http_request"
+  | "read_file"
+  | "write_file"
+  // Code execution
   | "run_code";
 
 export type GoalCategory = "explicit" | "semi-natural" | "ambiguous";
@@ -47,6 +50,7 @@ export interface AgentTask {
   attempts: number;
   replanDepth: number;
   payload: Record<string, string | number | boolean | undefined>;
+  dependsOn?: string[];   // task ids that must complete before this one runs
   startedAt?: string;
   endedAt?: string;
   durationMs?: number;
