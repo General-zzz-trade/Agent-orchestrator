@@ -28,8 +28,8 @@ export async function authPlugin(app: FastifyInstance): Promise<void> {
 
   app.addHook("preHandler", async (request: FastifyRequest, reply: FastifyReply) => {
     if (BYPASS_AUTH) return;
-    // Skip auth for health check
-    if (request.url === "/health") return;
+    // Skip auth for health check and Prometheus scraping
+    if (request.url === "/health" || request.url === "/metrics") return;
 
     const apiKey = request.headers["x-api-key"] as string | undefined;
     if (!apiKey || !validateApiKey(apiKey)) {

@@ -1,6 +1,7 @@
 import { runGoal } from "../core/runtime";
 import { setRunStatus, clearRunStatus } from "../api/run-store";
 import { JobQueue, JobRequest } from "./queue";
+import { incCounter, setGauge } from "../observability/metrics-store";
 
 const DEFAULT_CONCURRENCY = Number(process.env.WORKER_CONCURRENCY ?? 4);
 
@@ -16,14 +17,33 @@ export function getQueue(): JobQueue {
 
 async function processJob(job: JobRequest): Promise<void> {
   setRunStatus(job.runId, "running");
+  incCounter("agent_runs_total");
+  updateQueueGauges();
   try {
-    await runGoal(job.goal, job.options as never);
+    const ctx = await runGoal(job.goal, job.options as never);
+    if (ctx.result?.success) {
+      incCounter("agent_runs_success_total");
+    } else {
+      incCounter("agent_runs_failed_total");
+    }
+    incCounter("agent_tasks_total", ctx.tasks.length);
+    incCounter("agent_replans_total", ctx.replanCount);
+    incCounter("agent_llm_calls_total", ctx.usageLedger?.totalLLMInteractions ?? 0);
     setRunStatus(job.runId, "success");
   } catch {
+    incCounter("agent_runs_failed_total");
     setRunStatus(job.runId, "failed");
   } finally {
     clearRunStatus(job.runId);
+    updateQueueGauges();
   }
+}
+
+function updateQueueGauges(): void {
+  const q = getQueue();
+  setGauge("agent_queue_pending", q.stats.pending);
+  setGauge("agent_queue_running", q.stats.running);
+  setGauge("agent_queue_concurrency", q.stats.concurrency);
 }
 
 export function submitJob(runId: string, goal: string, options: Record<string, unknown> = {}): void {
@@ -35,4 +55,5 @@ export function submitJob(runId: string, goal: string, options: Record<string, u
   };
   setRunStatus(runId, "pending");
   getQueue().enqueue(job);
+  updateQueueGauges();
 }
