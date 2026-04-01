@@ -31,4 +31,8 @@ async function main() {
   console.log(`  GET  /health             - health check`);
 }
 
-void main();
+// Only start server when executed directly (not imported by tests)
+import { pathToFileURL } from "node:url";
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  void main();
+}

@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
-import { runGoal } from "../../core/runtime";
 import { listRuns, getRun } from "../../db/runs-repo";
-import { setRunStatus, getRunStatus, clearRunStatus } from "../run-store";
+import { getRunStatus } from "../run-store";
+import { submitJob, getQueue } from "../../worker/pool";
 
 export async function runsRoutes(app: FastifyInstance): Promise<void> {
   // POST /runs — submit a goal (non-blocking, returns 202 immediately)
@@ -19,20 +19,7 @@ export async function runsRoutes(app: FastifyInstance): Promise<void> {
   }, async (request, reply) => {
     const { goal, options = {} } = request.body;
     const runId = `run-${new Date().toISOString().replace(/[:.]/g, "-")}-${Math.random().toString(36).slice(2, 8)}`;
-    setRunStatus(runId, "pending");
-
-    setImmediate(async () => {
-      setRunStatus(runId, "running");
-      try {
-        await runGoal(goal, options as never);
-        setRunStatus(runId, "success");
-      } catch {
-        setRunStatus(runId, "failed");
-      } finally {
-        clearRunStatus(runId);
-      }
-    });
-
+    submitJob(runId, goal, options);
     return reply.code(202).send({ runId, status: "pending" });
   });
 
@@ -81,5 +68,10 @@ export async function runsRoutes(app: FastifyInstance): Promise<void> {
     const run = getRun(request.params.id);
     if (!run) return reply.code(404).send({ error: "Run not found" });
     return reply.send({ artifacts: run.artifacts });
+  });
+
+  // GET /queue/stats — worker pool status
+  app.get("/queue/stats", async (_request, reply) => {
+    return reply.send(getQueue().stats);
   });
 }

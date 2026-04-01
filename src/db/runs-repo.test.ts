@@ -38,8 +38,11 @@ test("listRuns returns most recent first", () => {
   const r2 = makeRun("repo-test-004");
   r2.startedAt = "2024-06-01T00:00:00.000Z";
   upsertRun(r1); upsertRun(r2);
-  const list = listRuns(10);
+  // Use large limit to ensure both records appear even if DB has prior records
+  const list = listRuns(500);
   const ids = list.map(r => r.runId);
-  assert.ok(ids.indexOf("repo-test-004") < ids.indexOf("repo-test-003"));
+  assert.ok(ids.includes("repo-test-003"), "should include repo-test-003");
+  assert.ok(ids.includes("repo-test-004"), "should include repo-test-004");
+  assert.ok(ids.indexOf("repo-test-004") < ids.indexOf("repo-test-003"), "004 (newer) should come before 003 (older)");
   closeDb();
 });
