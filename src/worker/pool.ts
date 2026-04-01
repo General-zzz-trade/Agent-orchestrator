@@ -2,6 +2,7 @@ import { runGoal } from "../core/runtime";
 import { setRunStatus, clearRunStatus } from "../api/run-store";
 import { JobQueue, JobRequest } from "./queue";
 import { incCounter, setGauge } from "../observability/metrics-store";
+import { upsertRun } from "../db/runs-repo";
 
 const DEFAULT_CONCURRENCY = Number(process.env.WORKER_CONCURRENCY ?? 4);
 
@@ -21,6 +22,8 @@ async function processJob(job: JobRequest): Promise<void> {
   updateQueueGauges();
   try {
     const ctx = await runGoal(job.goal, job.options as never);
+    // Persist with tenant scoping
+    upsertRun(ctx, job.tenantId);
     if (ctx.result?.success) {
       incCounter("agent_runs_success_total");
     } else {
@@ -46,11 +49,12 @@ function updateQueueGauges(): void {
   setGauge("agent_queue_concurrency", q.stats.concurrency);
 }
 
-export function submitJob(runId: string, goal: string, options: Record<string, unknown> = {}): void {
+export function submitJob(runId: string, goal: string, options: Record<string, unknown> = {}, tenantId = "default"): void {
   const job: JobRequest = {
     runId,
     goal,
     options,
+    tenantId,
     submittedAt: new Date().toISOString()
   };
   setRunStatus(runId, "pending");

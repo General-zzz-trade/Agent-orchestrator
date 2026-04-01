@@ -3,16 +3,19 @@ export const CREATE_API_KEYS_TABLE = `
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     key TEXT NOT NULL UNIQUE,
     name TEXT NOT NULL,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
     enabled INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     last_used_at TEXT
   );
   CREATE INDEX IF NOT EXISTS idx_api_keys_key ON api_keys(key);
+  CREATE INDEX IF NOT EXISTS idx_api_keys_tenant ON api_keys(tenant_id);
 `;
 
 export const CREATE_TABLES = `
   CREATE TABLE IF NOT EXISTS runs (
     id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
     goal TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',
     planner_used TEXT,
@@ -29,6 +32,7 @@ export const CREATE_TABLES = `
   CREATE TABLE IF NOT EXISTS artifacts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     run_id TEXT NOT NULL REFERENCES runs(id),
+    tenant_id TEXT NOT NULL DEFAULT 'default',
     type TEXT NOT NULL,
     path TEXT NOT NULL,
     description TEXT NOT NULL,

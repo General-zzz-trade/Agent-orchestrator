@@ -13,7 +13,7 @@ test("JobQueue: processes jobs up to concurrency limit", async () => {
   });
 
   for (let i = 0; i < 3; i++) {
-    queue.enqueue({ runId: String(i), goal: "test", options: {}, submittedAt: new Date().toISOString() });
+    queue.enqueue({ runId: String(i), goal: "test", options: {}, tenantId: "default", submittedAt: new Date().toISOString() });
   }
 
   // Wait for all jobs to complete
@@ -26,8 +26,8 @@ test("JobQueue: stats reflect pending and running counts", () => {
   let resolve: () => void;
   queue.setHandler(() => new Promise(r => { resolve = r; }));
 
-  queue.enqueue({ runId: "a", goal: "g", options: {}, submittedAt: "" });
-  queue.enqueue({ runId: "b", goal: "g", options: {}, submittedAt: "" });
+  queue.enqueue({ runId: "a", goal: "g", options: {}, tenantId: "default", submittedAt: "" });
+  queue.enqueue({ runId: "b", goal: "g", options: {}, tenantId: "default", submittedAt: "" });
 
   const { pending, running } = queue.stats;
   assert.equal(running, 1);
@@ -48,7 +48,7 @@ test("JobQueue: concurrency=1 processes jobs one at a time", async () => {
   });
 
   for (let i = 0; i < 4; i++) {
-    queue.enqueue({ runId: String(i), goal: "g", options: {}, submittedAt: "" });
+    queue.enqueue({ runId: String(i), goal: "g", options: {}, tenantId: "default", submittedAt: "" });
   }
 
   await new Promise(r => setTimeout(r, 200));

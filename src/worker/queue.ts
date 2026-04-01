@@ -2,6 +2,7 @@ export interface JobRequest {
   runId: string;
   goal: string;
   options: Record<string, unknown>;
+  tenantId: string;
   submittedAt: string;
 }
 

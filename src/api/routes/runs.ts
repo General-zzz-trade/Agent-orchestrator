@@ -22,15 +22,15 @@ export async function runsRoutes(app: FastifyInstance): Promise<void> {
     const goal = sanitizeGoal(rawGoal);
     if (!goal) return reply.code(400).send({ error: "goal is empty after sanitization" });
     const runId = `run-${new Date().toISOString().replace(/[:.]/g, "-")}-${Math.random().toString(36).slice(2, 8)}`;
-    submitJob(runId, goal, options);
-    return reply.code(202).send({ runId, status: "pending" });
+    submitJob(runId, goal, options, request.tenantId);
+    return reply.code(202).send({ runId, status: "pending", tenantId: request.tenantId });
   });
 
   // GET /runs — list recent runs
   app.get<{ Querystring: { limit?: string; offset?: string } }>("/runs", async (request, reply) => {
     const limit = Math.min(Number(request.query.limit ?? 20), 100);
     const offset = Number(request.query.offset ?? 0);
-    const runs = listRuns(limit, offset);
+    const runs = listRuns(limit, offset, request.tenantId);
     return reply.send({
       runs: runs.map(r => ({
         runId: r.runId,
@@ -49,7 +49,7 @@ export async function runsRoutes(app: FastifyInstance): Promise<void> {
 
   // GET /runs/:id — full run detail
   app.get<{ Params: { id: string } }>("/runs/:id", async (request, reply) => {
-    const run = getRun(request.params.id);
+    const run = getRun(request.params.id, request.tenantId);
     if (!run) return reply.code(404).send({ error: "Run not found" });
     return reply.send(run);
   });
@@ -58,7 +58,7 @@ export async function runsRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Params: { id: string } }>("/runs/:id/status", async (request, reply) => {
     const live = getRunStatus(request.params.id);
     if (live) return reply.send({ runId: request.params.id, status: live });
-    const run = getRun(request.params.id);
+    const run = getRun(request.params.id, request.tenantId);
     if (!run) return reply.code(404).send({ error: "Run not found" });
     return reply.send({
       runId: run.runId,
@@ -68,7 +68,7 @@ export async function runsRoutes(app: FastifyInstance): Promise<void> {
 
   // GET /runs/:id/artifacts — list artifacts
   app.get<{ Params: { id: string } }>("/runs/:id/artifacts", async (request, reply) => {
-    const run = getRun(request.params.id);
+    const run = getRun(request.params.id, request.tenantId);
     if (!run) return reply.code(404).send({ error: "Run not found" });
     return reply.send({ artifacts: run.artifacts });
   });
