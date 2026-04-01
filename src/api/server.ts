@@ -7,6 +7,7 @@ import { runsRoutes } from "./routes/runs";
 import { streamRoutes } from "./routes/stream";
 import { schedulesRoutes } from "./routes/schedules";
 import { memoryRoutes } from "./routes/memory";
+import { toolsRoutes } from "./routes/tools";
 import { authPlugin, initApiKeysTable, createApiKey } from "./plugins/auth";
 import { initSchedulesTable } from "../scheduler/store";
 import { startScheduler } from "../scheduler/engine";
@@ -37,6 +38,7 @@ export async function buildServer() {
   await app.register(streamRoutes, { prefix: "/api/v1" });
   await app.register(schedulesRoutes, { prefix: "/api/v1" });
   await app.register(memoryRoutes, { prefix: "/api/v1" });
+  await app.register(toolsRoutes, { prefix: "/api/v1" });
 
   app.get("/health", async () => ({
     status: "ok",

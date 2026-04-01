@@ -30,6 +30,7 @@ import { createRegexPlan } from "./regex-planner";
 import { matchTemplatePlan } from "./templates";
 import { TaskBlueprint } from "./task-id";
 import { validateAndMaterializeTasks } from "./validation";
+import { planFromKnowledge } from "./knowledge-template-planner";
 
 export type PlannerMode = "auto" | "template" | "regex" | "llm";
 type ConcretePlanner = "template" | "regex" | "llm";
@@ -136,6 +137,35 @@ export async function planTasks(goal: string, options: PlanTasksOptions): Promis
 
   if (mode === "llm") {
     return await planWithLLMOnly(trimmedGoal, options.runId, llmUsageCap, goalCategory, policy, usageLedger, failurePatterns);
+  }
+
+  // Try knowledge-template planner first — learned from past runs
+  const knowledgeResult = planFromKnowledge(trimmedGoal);
+  if (knowledgeResult.matched && knowledgeResult.confidence >= 0.6 && knowledgeResult.blueprints.length > 0) {
+    const knowledgeTasks = materializePlan(options.runId, knowledgeResult.blueprints);
+    if (knowledgeTasks.length > 0) {
+      const knowledgeCandidate = buildCandidate(
+        "template",
+        trimmedGoal,
+        knowledgeTasks,
+        `Knowledge template matched (confidence: ${Math.round(knowledgeResult.confidence * 100)}%, pattern: "${knowledgeResult.templatePattern}")`
+      );
+      if (knowledgeCandidate.valid && knowledgeCandidate.qualitySummary.quality !== "low") {
+        const decision = forcedRuleDecision("template", "Knowledge template planner matched with sufficient confidence.");
+        const escalationTrace = createEscalationDecisionTrace({
+          stage: "planner",
+          goalCategory,
+          plannerQuality: knowledgeCandidate.qualitySummary.quality,
+          currentFailureType: "none",
+          failurePatterns,
+          usageLedger,
+          policyMode: policy.mode,
+          providerHealth: buildProviderHealth(undefined, llmUsageCap),
+          decision
+        });
+        return finalizeCandidate(knowledgeCandidate, [knowledgeCandidate], undefined, llmUsageCap, 0, 0, goalCategory, policy.mode, escalationTrace);
+      }
+    }
   }
 
   const evaluatedCandidates: PlanCandidate[] = [];

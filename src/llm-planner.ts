@@ -9,6 +9,7 @@ import {
   safeJsonParse,
   unwrapTasksPayload
 } from "./llm/provider";
+import { buildKnowledgeContext, extractDomainFromGoal } from "./knowledge/planner-context";
 
 export type LLMPlannerConfig = LLMProviderConfig;
 
@@ -70,6 +71,7 @@ function createMockPlanner(config: LLMPlannerConfig): LLMPlanner {
   return {
     config,
     async plan(input: LLMPlannerInput): Promise<TaskBlueprint[]> {
+      // Use raw goal for pattern matching; knowledge context is informational
       const goal = input.goal;
       const command =
         extractQuotedValue(goal, /(?:start app|run app|launch app|boot app)\s+"([^"]+)"/i) ??
@@ -115,6 +117,10 @@ function createOpenAICompatiblePlanner(config: LLMPlannerConfig): LLMPlanner {
   return {
     config,
     async plan(input: LLMPlannerInput): Promise<TaskBlueprint[]> {
+      const domain = extractDomainFromGoal(input.goal);
+      const knowledgeContext = buildKnowledgeContext(input.goal, domain);
+      const enrichedGoal = input.goal + knowledgeContext;
+
       const raw = await callOpenAICompatible(
         config,
         [
@@ -122,7 +128,7 @@ function createOpenAICompatiblePlanner(config: LLMPlannerConfig): LLMPlanner {
           {
             role: "user",
             content: JSON.stringify({
-              goal: input.goal,
+              goal: enrichedGoal,
               recentRunsSummary: input.recentRunsSummary,
               failurePatterns: input.failurePatterns
             })
