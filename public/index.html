@@ -290,6 +290,7 @@
       </div>
       <img id="screenshot-img" alt="agent screenshot" />
       <div id="screenshot-ts" class="screenshot-ts" style="display:none"></div>
+      <div id="live-badge" style="display:none;position:absolute;top:8px;right:8px;background:#e53e3e;color:#fff;font-size:11px;font-weight:700;padding:2px 7px;border-radius:4px;letter-spacing:1px;">● LIVE</div>
     </div>
     <div class="panel-header">事件流</div>
     <div id="event-log" class="event-log">
@@ -422,20 +423,29 @@
     };
   }
 
+  let _liveBadgeTimer = null;
+
   function handleEvent(evt) {
     if (evt.type === 'screenshot' && evt.screenshotDataUrl) {
       const img = document.getElementById('screenshot-img');
       const ph = document.getElementById('screenshot-placeholder');
       const ts = document.getElementById('screenshot-ts');
+      const badge = document.getElementById('live-badge');
       img.src = evt.screenshotDataUrl;
       img.classList.add('visible');
       ph.style.display = 'none';
       ts.style.display = 'block';
       ts.textContent = new Date(evt.timestamp).toLocaleTimeString();
+      // Show LIVE badge; hide 3s after last frame
+      badge.style.display = 'block';
+      clearTimeout(_liveBadgeTimer);
+      _liveBadgeTimer = setTimeout(() => { badge.style.display = 'none'; }, 3000);
       return; // don't add to event log
     }
 
     if (evt.type === 'run_complete') {
+      document.getElementById('live-badge').style.display = 'none';
+      clearTimeout(_liveBadgeTimer);
       setTimeout(() => { loadHistory(); loadRunDetail(evt.runId || currentRunId); }, 800);
     }
 
@@ -452,6 +462,8 @@
     img.classList.remove('visible');
     document.getElementById('screenshot-placeholder').style.display = '';
     document.getElementById('screenshot-ts').style.display = 'none';
+    document.getElementById('live-badge').style.display = 'none';
+    clearTimeout(_liveBadgeTimer);
     document.getElementById('center-title').textContent = '实时画面';
   }
 

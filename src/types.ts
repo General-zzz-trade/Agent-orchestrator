@@ -1,6 +1,10 @@
 import type { BrowserSession } from "./browser";
 import type { AppProcessHandle } from "./shell";
 
+export interface ScreencastSession {
+  stop: () => Promise<void>;
+}
+
 export type TaskStatus = "pending" | "running" | "done" | "failed";
 
 export type AgentAction =
@@ -229,6 +233,7 @@ export interface RunContext {
   startedAt: string;
   endedAt?: string;
   browserSession?: BrowserSession;
+  screencastSession?: ScreencastSession;
   appProcess?: AppProcessHandle;
   metrics?: RunMetrics;
   terminationReason?: TerminationReason;

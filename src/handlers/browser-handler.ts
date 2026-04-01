@@ -12,6 +12,7 @@ import {
 } from "../browser";
 import { AgentTask, RunArtifact, RunContext } from "../types";
 import { publishEvent } from "../streaming/event-bus";
+import { startScreencast } from "../streaming/screencast";
 
 export interface TaskExecutionOutput {
   summary: string;
@@ -53,9 +54,14 @@ async function executeBrowserAction(
   switch (task.type) {
     case "open_page": {
       const url = readString(task, "url");
+      const isFirstPage = !context.browserSession;
       const session = await getOrCreateBrowserSession(context);
       logger.info(`Opening page: ${url}`);
       const title = await openPage(session, url);
+      // Start continuous screencast on first page open (replaces per-action screenshots)
+      if (isFirstPage && session.page && !context.screencastSession) {
+        context.screencastSession = await startScreencast(session.page, context.runId).catch(() => undefined);
+      }
       return {
         summary: `Opened page: ${url} (${title})`
       };

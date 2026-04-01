@@ -148,6 +148,8 @@ export async function runGoal(goal: string, options: RunOptions = {}): Promise<R
     context.terminationReason = determineTerminationReason(message);
   } finally {
     context.endedAt = new Date().toISOString();
+    await context.screencastSession?.stop();
+    context.screencastSession = undefined;
     await closeBrowserSession(context.browserSession);
     await stopApp(context.appProcess);
     context.browserSession = undefined;
