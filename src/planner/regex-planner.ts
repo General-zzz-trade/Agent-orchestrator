@@ -69,6 +69,49 @@ function parseBlueprint(part: string): TaskBlueprint | null {
     return { type: "click", payload: { selector: clickSelector } };
   }
 
+  const typeText = extractQuotedValue(part, /type\s+"([^"]+)"/i);
+  const typeSelector =
+    extractQuotedValue(part, /(?:into|in)\s+"([^"]+)"/i) ??
+    extractUnquotedSelectorAfter(part, /(?:into|in)\s+/i);
+  if (typeText && typeSelector && /\btype\b/i.test(part)) {
+    return { type: "type", payload: { selector: typeSelector, text: typeText } };
+  }
+
+  const selectValue = extractQuotedValue(part, /select\s+"([^"]+)"/i);
+  const selectSelector =
+    extractQuotedValue(part, /(?:from|in)\s+"([^"]+)"/i) ??
+    extractUnquotedSelectorAfter(part, /(?:from|in)\s+/i);
+  if (selectValue && selectSelector && /\bselect\b/i.test(part)) {
+    return { type: "select", payload: { selector: selectSelector, value: selectValue } };
+  }
+
+  const hoverSelector =
+    extractQuotedValue(part, /hover\s+(?:over\s+)?"([^"]+)"/i) ??
+    extractUnquotedSelectorAfter(part, /hover\s+(?:over\s+)?/i);
+  if (hoverSelector && /\bhover\b/i.test(part)) {
+    return { type: "hover", payload: { selector: hoverSelector } };
+  }
+
+  if (/\bscroll\b/i.test(part)) {
+    const scrollDirection = /\bup\b/i.test(part)
+      ? "up"
+      : /\bleft\b/i.test(part)
+        ? "left"
+        : /\bright\b/i.test(part)
+          ? "right"
+          : "down";
+    const scrollAmount = extractScrollAmount(part) ?? 300;
+    const scrollSelector = extractQuotedValue(part, /scroll\s+(?:up|down|left|right)?\s*(?:in|on|inside)?\s*"([^"]+)"/i);
+    return {
+      type: "scroll",
+      payload: {
+        ...(scrollSelector ? { selector: scrollSelector } : {}),
+        direction: scrollDirection,
+        amount: scrollAmount
+      }
+    };
+  }
+
   const waitDuration = extractWaitDuration(part);
   if (waitDuration !== null && /\bwait\b/i.test(part) && !/\bwait for server\b/i.test(part)) {
     return { type: "wait", payload: { durationMs: waitDuration } };
@@ -114,6 +157,30 @@ function extractQuotedValue(value: string, pattern: RegExp): string | undefined 
 function extractUnquotedSelector(value: string): string | undefined {
   const match = value.match(/click\s+(#[^\s]+|\.[^\s]+|text=[^\s]+|data-testid=[^\s]+)/i);
   return match?.[1];
+}
+
+function extractUnquotedSelectorAfter(value: string, prefix: RegExp): string | undefined {
+  const source = prefix.source;
+  const pattern = new RegExp(source + "(#[^\\s]+|\\.[^\\s]+|\\[data-[^\\]]+\\])", "i");
+  const match = value.match(pattern);
+  return match?.[1];
+}
+
+function extractScrollAmount(value: string): number | undefined {
+  const pxMatch = value.match(/(\d+)\s*px/i);
+  if (pxMatch) {
+    return Number(pxMatch[1]);
+  }
+
+  if (/\bhalf\b/i.test(value)) {
+    return 400;
+  }
+
+  if (/\bfull\b|\bpage\b/i.test(value)) {
+    return 800;
+  }
+
+  return undefined;
 }
 
 function extractWaitDuration(value: string): number | null {

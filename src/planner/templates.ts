@@ -15,11 +15,27 @@ export function matchTemplatePlan(goal: string): TaskBlueprint[] | null {
     extractUrl(normalized);
   const assertText = extractQuotedValue(normalized, /assert text\s+"([^"]+)"/i) ?? extractQuotedValue(normalized, /verify text\s+"([^"]+)"/i);
   const clickSelector = extractQuotedValue(normalized, /click\s+"([^"]+)"/i) ?? extractUnquotedSelector(normalized);
+  const typeText = extractQuotedValue(normalized, /type\s+"([^"]+)"/i);
+  const typeSelector = extractQuotedValue(normalized, /(?:into|in)\s+"([^"]+)"/i);
   const screenshotPath = extractScreenshotPath(normalized) ?? "artifacts/screenshot.png";
   const hasScreenshot = /\bscreenshot\b|\bcapture\b/i.test(normalized);
 
   const waitForServerPart = parts.find((part) => /wait for server/i.test(part));
   const assertPart = parts.find((part) => /assert text|verify text/i.test(part));
+
+  // Form-fill template: start app → wait → open → type fields → click submit → assert → screenshot → stop
+  if (startCommand && serverUrl && pageUrl && typeText && typeSelector && clickSelector && assertText) {
+    return [
+      { type: "start_app", payload: { command: startCommand } },
+      { type: "wait_for_server", payload: { url: serverUrl, timeoutMs: extractTimeout(waitForServerPart) ?? 30000 } },
+      { type: "open_page", payload: { url: pageUrl } },
+      { type: "type", payload: { selector: typeSelector, text: typeText } },
+      { type: "click", payload: { selector: clickSelector } },
+      { type: "assert_text", payload: { text: assertText, timeoutMs: extractTimeout(assertPart) ?? 5000 } },
+      ...(hasScreenshot ? [{ type: "screenshot" as const, payload: { outputPath: screenshotPath } }] : []),
+      { type: "stop_app", payload: {} }
+    ];
+  }
 
   if (startCommand && serverUrl && pageUrl && assertText && clickSelector && hasScreenshot) {
     return [

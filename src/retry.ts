@@ -19,6 +19,16 @@ const RETRY_POLICIES: Partial<Record<AgentTask["type"], RetryPolicy>> = {
     retryDelayMs: 1000,
     captureFailureScreenshot: true
   },
+  type: {
+    maxRetries: 1,
+    retryDelayMs: 500,
+    captureFailureScreenshot: true
+  },
+  select: {
+    maxRetries: 1,
+    retryDelayMs: 500,
+    captureFailureScreenshot: false
+  },
   assert_text: {
     maxRetries: 2,
     retryDelayMs: 1000,

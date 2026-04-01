@@ -1,10 +1,18 @@
 import { AgentTask, PlanQualitySummary } from "../types";
 import { validateTaskSemantics, validateTaskShape } from "./validation";
 
+// Interaction actions that require a page to be open first
+const INTERACTION_TYPES: AgentTask["type"][] = ["click", "type", "select", "hover", "scroll"];
+
 export function evaluatePlanQuality(goal: string, tasks: AgentTask[]): PlanQualitySummary {
   const issues: string[] = [];
   const has = (type: AgentTask["type"]): boolean => tasks.some((task) => task.type === type);
+  const hasAny = (types: AgentTask["type"][]): boolean => types.some((t) => has(t));
   const firstIndex = (type: AgentTask["type"]): number => tasks.findIndex((task) => task.type === type);
+  const firstIndexAny = (types: AgentTask["type"][]): number => {
+    const indices = types.map((t) => firstIndex(t)).filter((i) => i >= 0);
+    return indices.length > 0 ? Math.min(...indices) : -1;
+  };
   const mentions = (pattern: RegExp): boolean => pattern.test(goal);
 
   if (tasks.length === 0) {
@@ -24,8 +32,12 @@ export function evaluatePlanQuality(goal: string, tasks: AgentTask[]): PlanQuali
     issues.push("stop_app appears before start_app.");
   }
 
-  if (has("click") && !has("open_page")) {
-    issues.push("click is missing open_page before interaction.");
+  // Any interaction action requires open_page first
+  for (const interactionType of INTERACTION_TYPES) {
+    if (has(interactionType) && !has("open_page")) {
+      issues.push(`${interactionType} is missing open_page before interaction.`);
+      break; // one message is enough
+    }
   }
 
   if (has("open_page") && has("wait_for_server") && has("start_app") && firstIndex("open_page") < firstIndex("wait_for_server")) {
@@ -36,7 +48,8 @@ export function evaluatePlanQuality(goal: string, tasks: AgentTask[]): PlanQuali
     issues.push("assert_text is missing open_page before assertion.");
   }
 
-  if (has("assert_text") && !has("click") && mentions(/dashboard|login|submit|confirm/i)) {
+  // assert_text for goal-dependent state needs a prior UI action
+  if (has("assert_text") && !hasAny(INTERACTION_TYPES) && mentions(/dashboard|login|submit|confirm/i)) {
     issues.push("assert_text may be missing a prior UI action for goal-dependent state.");
   }
 
@@ -48,16 +61,20 @@ export function evaluatePlanQuality(goal: string, tasks: AgentTask[]): PlanQuali
     issues.push("wait_for_server appears before start_app.");
   }
 
-  if (firstIndex("click") >= 0 && firstIndex("open_page") >= 0 && firstIndex("click") < firstIndex("open_page")) {
-    issues.push("click appears before open_page.");
+  // Any interaction action should not appear before open_page
+  const firstInteraction = firstIndexAny(INTERACTION_TYPES);
+  if (firstInteraction >= 0 && firstIndex("open_page") >= 0 && firstInteraction < firstIndex("open_page")) {
+    const firstInteractionType = tasks[firstInteraction].type;
+    issues.push(`${firstInteractionType} appears before open_page.`);
   }
 
   if (firstIndex("assert_text") >= 0 && firstIndex("open_page") >= 0 && firstIndex("assert_text") < firstIndex("open_page")) {
     issues.push("assert_text appears before open_page.");
   }
 
-  if (has("assert_text") && has("click") && firstIndex("assert_text") < firstIndex("click")) {
-    issues.push("assert_text appears before click.");
+  // assert_text should not appear before all interaction actions
+  if (has("assert_text") && hasAny(INTERACTION_TYPES) && firstIndex("assert_text") < firstIndexAny(INTERACTION_TYPES)) {
+    issues.push("assert_text appears before any UI interaction.");
   }
 
   if (mentions(/screenshot|capture/i) && !has("screenshot")) {

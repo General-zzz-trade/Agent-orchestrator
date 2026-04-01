@@ -94,16 +94,22 @@ export function validateTaskSemantics(tasks: AgentTask[]): { valid: boolean; iss
     issues.push("Semantic validation: start_app should be paired with stop_app.");
   }
 
-  if (has("click") && !has("open_page")) {
-    issues.push("Semantic validation: click requires open_page first.");
+  const INTERACTION_TYPES: AgentTask["type"][] = ["click", "type", "select", "hover", "scroll"];
+  const hasInteraction = INTERACTION_TYPES.some((t) => has(t));
+
+  for (const interactionType of INTERACTION_TYPES) {
+    if (has(interactionType) && !has("open_page")) {
+      issues.push(`Semantic validation: ${interactionType} requires open_page first.`);
+      break;
+    }
   }
 
   if (has("assert_text") && !has("open_page")) {
     issues.push("Semantic validation: assert_text requires open_page first.");
   }
 
-  if (has("assert_text") && !has("click") && /dashboard|success|result|logged in/i.test(JSON.stringify(tasks.map((task) => task.payload)))) {
-    issues.push("Semantic validation: assert_text looks stateful but no prior click exists.");
+  if (has("assert_text") && !hasInteraction && /dashboard|success|result|logged in/i.test(JSON.stringify(tasks.map((task) => task.payload)))) {
+    issues.push("Semantic validation: assert_text looks stateful but no prior UI interaction exists.");
   }
 
   if (indexOf("wait_for_server") >= 0 && indexOf("start_app") >= 0 && indexOf("wait_for_server") < indexOf("start_app")) {

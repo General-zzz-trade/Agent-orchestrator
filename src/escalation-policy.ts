@@ -42,6 +42,9 @@ export function classifyGoalCategory(goal: string): GoalCategory {
     /open page/i,
     /assert text/i,
     /\bclick\s+"/i,
+    /\btype\s+"/i,
+    /\bselect\s+"/i,
+    /\bhover\s+(?:over\s+)?"/i,
     /\bstop app\b/i
   ].filter((pattern) => pattern.test(goal)).length;
   const naturalSignals = [
@@ -101,6 +104,14 @@ export function classifyFailureType(
 
   if (/assert|expected text|text.*not found|not found.*text/i.test(value)) {
     return "assert_mismatch";
+  }
+
+  if (/not editable|not interactable|element.*disabled|disabled.*element|readonly|read.only/i.test(value)) {
+    return "selector_mismatch";
+  }
+
+  if (/option.*not found|no option.*match|no.*option.*value|value.*not.*option/i.test(value)) {
+    return "selector_mismatch";
   }
 
   if (/selector|no node matched|locator/i.test(value)) {
