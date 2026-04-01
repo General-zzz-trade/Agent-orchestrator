@@ -51,7 +51,7 @@ test("planner smoke: low-quality fallback", async () => {
       runId: "planner-low",
       mode: "auto",
       maxLLMPlannerCalls: 1,
-      policy: { plannerCostMode: "aggressive", replannerCostMode: "balanced", preferRuleSystemsOnCheapGoals: false, allowLLMReplannerForSimpleFailures: false }
+      policy: { mode: "balanced", plannerCostMode: "aggressive", replannerCostMode: "balanced", preferRuleSystemsOnCheapGoals: false, allowLLMReplannerForSimpleFailures: false }
     });
     assert.notEqual(result.plannerUsed, "llm");
   });

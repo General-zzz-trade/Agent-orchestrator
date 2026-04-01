@@ -99,16 +99,16 @@ export function classifyFailureType(
     return "none";
   }
 
-  if (/selector|not found|no node matched/i.test(value)) {
+  if (/assert|expected text|text.*not found|not found.*text/i.test(value)) {
+    return "assert_mismatch";
+  }
+
+  if (/selector|no node matched|locator/i.test(value)) {
     return "selector_mismatch";
   }
 
   if (/timeout|timed out|did not become available/i.test(value)) {
     return "timeout";
-  }
-
-  if (/assert|expected|text/i.test(value)) {
-    return "assert_mismatch";
   }
 
   return "unknown";

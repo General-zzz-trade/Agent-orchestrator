@@ -23,15 +23,15 @@ async function main(): Promise<void> {
   console.log("");
 
   console.log("Escalation decisions:");
-  console.log(JSON.stringify(run.escalationTrace ?? [], null, 2));
+  console.log(JSON.stringify(run.escalationDecisions ?? [], null, 2));
   console.log("");
 
   console.log("LLM usage rationale:");
-  console.log((run.escalationTrace ?? []).map((item) => `[${item.stage}] ${item.llmUsageRationale}`).join("\n") || "none");
+  console.log((run.escalationDecisions ?? []).map((item) => `[${item.stage}] ${item.decision.llmUsageRationale}`).join("\n") || "none");
   console.log("");
 
   console.log("Fallback rationale:");
-  console.log((run.escalationTrace ?? []).map((item) => `[${item.stage}] ${item.fallbackRationale}`).join("\n") || "none");
+  console.log((run.escalationDecisions ?? []).map((item) => `[${item.stage}] ${item.decision.fallbackRationale}`).join("\n") || "none");
   console.log("");
 
   console.log("Planner decision trace:");

@@ -125,6 +125,31 @@ function buildRuleDecision(input: ReplanInput): ReplanDecision | undefined {
     };
   }
 
+  if (input.task.type === "type") {
+    return {
+      insertTasks: [
+        createReplanTask(input.context, input.task, "click", { selector: input.task.payload.selector }),
+        createReplanTask(input.context, input.task, "wait", { durationMs: 300 }),
+        createReplanTask(input.context, input.task, "type", { ...input.task.payload })
+      ],
+      replaceWith: [],
+      abort: false,
+      reason: "Rule replanner: type failed, inserted click+wait to focus element before retrying."
+    };
+  }
+
+  if (input.task.type === "select") {
+    return {
+      insertTasks: [
+        createReplanTask(input.context, input.task, "wait", { durationMs: 500 }),
+        createReplanTask(input.context, input.task, "select", { ...input.task.payload })
+      ],
+      replaceWith: [],
+      abort: false,
+      reason: "Rule replanner: select failed, inserted a wait before retrying option selection."
+    };
+  }
+
   if (input.task.type === "assert_text") {
     return {
       insertTasks: [

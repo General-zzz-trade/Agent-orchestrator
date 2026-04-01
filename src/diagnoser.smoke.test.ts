@@ -1,9 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { reflectOnRun } from "./reflector";
-import { LLMDiagnoser } from "./llm-diagnoser";
+import { LLMDiagnoser, LLMDiagnoserOutput } from "./llm-diagnoser";
 import { RunContext } from "./types";
 import { createUsageLedger } from "./usage-ledger";
+
+const MOCK_CONFIG = { provider: "mock", model: "mock", timeoutMs: 1000, maxTokens: 100, temperature: 0 };
+
+function mockDiagnoser(fn: () => Promise<LLMDiagnoserOutput>): LLMDiagnoser {
+  return { config: MOCK_CONFIG, diagnose: fn };
+}
 
 function runFixture(): RunContext {
   return {
@@ -20,38 +26,38 @@ function runFixture(): RunContext {
     limits: { maxReplansPerRun: 2, maxReplansPerTask: 1 },
     startedAt: new Date().toISOString(),
     usageLedger: createUsageLedger(),
-    escalationTrace: [{ stage: "diagnoser", decision: { useRulePlanner: true, useLLMPlanner: false, useRuleReplanner: true, useLLMReplanner: false, fallbackToRules: false, abortEarly: false, useDiagnoser: true }, llmUsageRationale: "enabled", fallbackRationale: "none" }],
+    escalationDecisions: [],
     result: { success: false, message: "failed" },
     terminationReason: "task_failure"
   };
 }
 
 test("diagnoser smoke: success", async () => {
-  const diagnoser: LLMDiagnoser = { diagnose: async () => ({ diagnosis: "ok", topRisks: ["risk"], suggestedNextImprovements: ["improve"] }) };
+  const diagnoser = mockDiagnoser(async () => ({ diagnosis: "all ok: login flow completed successfully", topRisks: ["risk"], suggestedNextImprovements: ["improve"] }));
   const reflection = await reflectOnRun(runFixture(), { diagnoser });
-  assert.ok(reflection.diagnosis.includes("ok"));
+  assert.ok(reflection.diagnosis.includes("all ok"));
 });
 
 test("diagnoser smoke: timeout", async () => {
-  const diagnoser: LLMDiagnoser = { diagnose: async () => { throw new Error("timed out"); } };
+  const diagnoser = mockDiagnoser(async () => { throw new Error("timed out"); });
   const reflection = await reflectOnRun(runFixture(), { diagnoser });
   assert.ok(reflection.diagnosis.length > 0);
 });
 
 test("diagnoser smoke: empty response", async () => {
-  const diagnoser: LLMDiagnoser = { diagnose: async () => ({ diagnosis: "", topRisks: [], suggestedNextImprovements: [] }) };
+  const diagnoser = mockDiagnoser(async () => ({ diagnosis: "", topRisks: [], suggestedNextImprovements: [] }));
   const reflection = await reflectOnRun(runFixture(), { diagnoser });
   assert.ok(reflection.suggestedNextImprovements && reflection.suggestedNextImprovements.length > 0);
 });
 
 test("diagnoser smoke: invalid json", async () => {
-  const diagnoser: LLMDiagnoser = { diagnose: async () => { throw new Error("invalid json"); } };
+  const diagnoser = mockDiagnoser(async () => { throw new Error("invalid json"); });
   const reflection = await reflectOnRun(runFixture(), { diagnoser });
   assert.ok(reflection.topRisks && reflection.topRisks.length > 0);
 });
 
 test("diagnoser smoke: low-quality output fallback", async () => {
-  const diagnoser: LLMDiagnoser = { diagnose: async () => ({ diagnosis: "weak", topRisks: ["only"], suggestedNextImprovements: [] }) };
+  const diagnoser = mockDiagnoser(async () => ({ diagnosis: "weak", topRisks: ["only"], suggestedNextImprovements: [] }));
   const reflection = await reflectOnRun(runFixture(), { diagnoser });
   assert.ok(reflection.improvementSuggestions.length > 0);
 });

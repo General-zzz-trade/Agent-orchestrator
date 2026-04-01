@@ -6,6 +6,10 @@ const ALLOWED_PAYLOAD_FIELDS: Record<AgentAction, string[]> = {
   wait_for_server: ["url", "timeoutMs"],
   open_page: ["url"],
   click: ["selector"],
+  type: ["selector", "text"],
+  select: ["selector", "value"],
+  scroll: ["selector", "direction", "amount"],
+  hover: ["selector"],
   wait: ["durationMs"],
   assert_text: ["text", "timeoutMs"],
   screenshot: ["outputPath"],
@@ -17,6 +21,9 @@ const REQUIRED_PAYLOAD_FIELDS: Partial<Record<AgentAction, string[]>> = {
   wait_for_server: ["url"],
   open_page: ["url"],
   click: ["selector"],
+  type: ["selector", "text"],
+  select: ["selector", "value"],
+  hover: ["selector"],
   wait: ["durationMs"],
   assert_text: ["text"]
 };

@@ -19,7 +19,7 @@ function baseContext(): RunContext {
     limits: { maxReplansPerRun: 3, maxReplansPerTask: 1 },
     startedAt: new Date().toISOString(),
     usageLedger: createUsageLedger(),
-    escalationTrace: []
+    escalationDecisions: []
   };
 }
 function clickTask(): AgentTask { return { id: "t1", type: "click", status: "failed", retries: 0, attempts: 1, replanDepth: 0, payload: { selector: "#wrong-button" }, errorHistory: ["not found"] }; }

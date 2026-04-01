@@ -2,6 +2,15 @@ import { FailurePattern } from "./memory";
 import { RecentRunSummary } from "./llm-diagnoser";
 import { AgentAction, AgentTask } from "./types";
 import { TaskBlueprint } from "./planner/task-id";
+import {
+  LLMProviderConfig,
+  callOpenAICompatible,
+  readProviderConfig,
+  safeJsonParse,
+  unwrapTasksPayload
+} from "./llm/provider";
+
+export type LLMReplannerConfig = LLMProviderConfig;
 
 export interface LLMReplannerInput {
   goal: string;
@@ -12,53 +21,40 @@ export interface LLMReplannerInput {
   currentTaskListSnapshot: AgentTask[];
 }
 
-export interface LLMReplannerConfig {
-  provider: string;
-  model: string;
-  timeoutMs: number;
-  maxTokens: number;
-  temperature: number;
-  apiKey?: string;
-  baseUrl?: string;
-}
-
 export interface LLMReplanner {
   readonly config: LLMReplannerConfig;
   replan(input: LLMReplannerInput): Promise<TaskBlueprint[]>;
 }
 
-const ALLOWED_TASK_TYPES = new Set<AgentAction>([
+export const ALLOWED_REPLANNER_TASK_TYPES = new Set<AgentAction>([
   "start_app",
   "wait_for_server",
   "open_page",
   "click",
+  "type",
+  "select",
+  "scroll",
+  "hover",
   "wait",
   "assert_text",
   "screenshot",
   "stop_app"
 ]);
 
+const REPLANNER_SYSTEM_PROMPT =
+  "You are a constrained UI test replanner. Return JSON only. Output {\"tasks\":[...]} where each task uses only allowed types: start_app, wait_for_server, open_page, click, type, select, scroll, hover, wait, assert_text, screenshot, stop_app. Produce only small remedial steps.";
+
 export function createReplannerFromEnv(): LLMReplanner | undefined {
-  const provider = process.env.LLM_REPLANNER_PROVIDER?.trim();
-  if (!provider) {
+  const config = readProviderConfig("LLM_REPLANNER", { maxTokens: 400 });
+  if (!config.provider) {
     return undefined;
   }
 
-  const config: LLMReplannerConfig = {
-    provider,
-    model: process.env.LLM_REPLANNER_MODEL?.trim() || "gpt-4.1-mini",
-    timeoutMs: Number(process.env.LLM_REPLANNER_TIMEOUT_MS ?? 8000),
-    maxTokens: Number(process.env.LLM_REPLANNER_MAX_TOKENS ?? 400),
-    temperature: Number(process.env.LLM_REPLANNER_TEMPERATURE ?? 0.1),
-    apiKey: process.env.LLM_REPLANNER_API_KEY?.trim(),
-    baseUrl: process.env.LLM_REPLANNER_BASE_URL?.trim()
-  };
-
-  if (provider === "mock") {
+  if (config.provider === "mock") {
     return createMockReplanner(config);
   }
 
-  if (provider === "openai-compatible") {
+  if (config.provider === "openai-compatible") {
     if (!config.apiKey || !config.baseUrl) {
       return undefined;
     }
@@ -70,7 +66,7 @@ export function createReplannerFromEnv(): LLMReplanner | undefined {
 }
 
 export function validateLLMReplannerOutput(tasks: TaskBlueprint[]): boolean {
-  return tasks.every((task) => ALLOWED_TASK_TYPES.has(task.type));
+  return tasks.every((task) => ALLOWED_REPLANNER_TASK_TYPES.has(task.type));
 }
 
 function createMockReplanner(config: LLMReplannerConfig): LLMReplanner {
@@ -123,8 +119,26 @@ function createOpenAICompatibleReplanner(config: LLMReplannerConfig): LLMReplann
   return {
     config,
     async replan(input: LLMReplannerInput): Promise<TaskBlueprint[]> {
-      const responseText = await postReplanRequest(config, input);
-      const parsed = safeJsonParse(responseText);
+      const raw = await callOpenAICompatible(
+        config,
+        [
+          { role: "system", content: REPLANNER_SYSTEM_PROMPT },
+          {
+            role: "user",
+            content: JSON.stringify({
+              goal: input.goal,
+              currentTask: input.currentTask,
+              currentError: input.currentError,
+              recentRunsSummary: input.recentRunsSummary,
+              failurePatterns: input.failurePatterns,
+              currentTaskListSnapshot: input.currentTaskListSnapshot
+            })
+          }
+        ],
+        "LLM replanner"
+      );
+
+      const parsed = safeJsonParse(unwrapTasksPayload(raw));
 
       if (!Array.isArray(parsed)) {
         throw new Error("LLM replanner response was not a JSON task array.");
@@ -137,86 +151,6 @@ function createOpenAICompatibleReplanner(config: LLMReplannerConfig): LLMReplann
   };
 }
 
-async function postReplanRequest(config: LLMReplannerConfig, input: LLMReplannerInput): Promise<string> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), config.timeoutMs);
-
-  try {
-    const response = await fetch(config.baseUrl!, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${config.apiKey}`
-      },
-      signal: controller.signal,
-      body: JSON.stringify({
-        model: config.model,
-        max_tokens: config.maxTokens,
-        temperature: config.temperature,
-        response_format: { type: "json_object" },
-        messages: [
-          {
-            role: "system",
-            content:
-              "You are a constrained UI test replanner. Return JSON only. Output {\"tasks\":[...]} where each task uses only allowed types: start_app, wait_for_server, open_page, click, wait, assert_text, screenshot, stop_app. Produce only small remedial steps."
-          },
-          {
-            role: "user",
-            content: JSON.stringify({
-              goal: input.goal,
-              currentTask: input.currentTask,
-              currentError: input.currentError,
-              recentRunsSummary: input.recentRunsSummary,
-              failurePatterns: input.failurePatterns,
-              currentTaskListSnapshot: input.currentTaskListSnapshot
-            })
-          }
-        ]
-      })
-    });
-
-    if (!response.ok) {
-      throw new Error(`LLM replanner HTTP ${response.status}`);
-    }
-
-    const body = (await response.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
-    const content = body.choices?.[0]?.message?.content;
-
-    if (!content) {
-      throw new Error("LLM replanner returned empty content.");
-    }
-
-    return unwrapTasksPayload(content);
-  } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
-      throw new Error(`LLM replanner timed out after ${config.timeoutMs}ms.`);
-    }
-
-    throw error;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-function unwrapTasksPayload(content: string): string {
-  const parsed = safeJsonParse(content);
-  if (parsed && typeof parsed === "object" && Array.isArray((parsed as { tasks?: unknown }).tasks)) {
-    return JSON.stringify((parsed as { tasks: unknown[] }).tasks);
-  }
-
-  return content;
-}
-
-function safeJsonParse(value: string): unknown {
-  try {
-    return JSON.parse(value);
-  } catch {
-    return undefined;
-  }
-}
-
 function normalizeTaskBlueprint(value: unknown): TaskBlueprint | undefined {
   if (!value || typeof value !== "object") {
     return undefined;
@@ -227,7 +161,7 @@ function normalizeTaskBlueprint(value: unknown): TaskBlueprint | undefined {
     payload?: unknown;
   };
 
-  if (typeof candidate.type !== "string" || !ALLOWED_TASK_TYPES.has(candidate.type as AgentAction)) {
+  if (typeof candidate.type !== "string" || !ALLOWED_REPLANNER_TASK_TYPES.has(candidate.type as AgentAction)) {
     return undefined;
   }
 

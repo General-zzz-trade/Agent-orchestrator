@@ -2,8 +2,12 @@ import { Logger } from "../logger";
 import {
   clickElement,
   createBrowserSession,
+  hoverElement,
   openPage,
+  scrollElement,
+  selectOption,
   takeScreenshot,
+  typeIntoElement,
   waitForDuration
 } from "../browser";
 import { AgentTask, RunArtifact, RunContext } from "../types";
@@ -36,6 +40,50 @@ export async function handleBrowserTask(
       await clickElement(session, selector);
       return {
         summary: `Clicked: ${selector}`
+      };
+    }
+
+    case "type": {
+      const selector = readString(task, "selector");
+      const text = readString(task, "text");
+      const session = requireBrowserSession(context, task.type);
+      logger.info(`Typing into: ${selector}`);
+      await typeIntoElement(session, selector, text);
+      return {
+        summary: `Typed into: ${selector}`
+      };
+    }
+
+    case "select": {
+      const selector = readString(task, "selector");
+      const value = readString(task, "value");
+      const session = requireBrowserSession(context, task.type);
+      logger.info(`Selecting "${value}" in: ${selector}`);
+      await selectOption(session, selector, value);
+      return {
+        summary: `Selected "${value}" in: ${selector}`
+      };
+    }
+
+    case "scroll": {
+      const selector = task.payload.selector ? readString(task, "selector") : undefined;
+      const direction = (readString(task, "direction", "down") as "up" | "down" | "left" | "right");
+      const amount = readNumber(task, "amount", 300);
+      const session = requireBrowserSession(context, task.type);
+      logger.info(`Scrolling ${direction} ${amount}px${selector ? ` on: ${selector}` : ""}`);
+      await scrollElement(session, selector, direction, amount);
+      return {
+        summary: `Scrolled ${direction} ${amount}px`
+      };
+    }
+
+    case "hover": {
+      const selector = readString(task, "selector");
+      const session = requireBrowserSession(context, task.type);
+      logger.info(`Hovering: ${selector}`);
+      await hoverElement(session, selector);
+      return {
+        summary: `Hovered: ${selector}`
       };
     }
 
