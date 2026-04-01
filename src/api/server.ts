@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import { runsRoutes } from "./routes/runs";
+import { streamRoutes } from "./routes/stream";
 import { authPlugin, initApiKeysTable, createApiKey } from "./plugins/auth";
 import { renderPrometheus } from "../observability/metrics-store";
 import { listPlugins } from "../plugins/registry";
@@ -13,6 +14,7 @@ export async function buildServer() {
   await app.register(cors, { origin: true });
   await app.register(authPlugin);
   await app.register(runsRoutes, { prefix: "/api/v1" });
+  await app.register(streamRoutes, { prefix: "/api/v1" });
 
   app.get("/health", async () => ({
     status: "ok",
@@ -64,6 +66,7 @@ async function main() {
   console.log(`  GET  /api/v1/runs/:id    - run detail`);
   console.log(`  GET  /api/v1/runs/:id/status    - live status`);
   console.log(`  GET  /api/v1/runs/:id/artifacts - artifacts`);
+  console.log(`  GET  /api/v1/runs/:id/stream     - SSE real-time event stream`);
   console.log(`  GET  /health             - health check`);
   console.log(`  POST /api/v1/keys        - create API key`);
   console.log(`  GET  /api/v1/knowledge/stats     - knowledge base stats`);

@@ -11,13 +11,41 @@ import {
   waitForDuration
 } from "../browser";
 import { AgentTask, RunArtifact, RunContext } from "../types";
+import { publishEvent } from "../streaming/event-bus";
 
 export interface TaskExecutionOutput {
   summary: string;
   artifacts?: RunArtifact[];
 }
 
+async function captureAndPublishScreenshot(context: RunContext, taskId: string): Promise<void> {
+  if (!context.browserSession?.page) return;
+  try {
+    const buffer = await context.browserSession.page.screenshot({ type: "jpeg", quality: 60 });
+    const dataUrl = `data:image/jpeg;base64,${buffer.toString("base64")}`;
+    publishEvent({
+      type: "screenshot",
+      runId: context.runId,
+      taskId,
+      timestamp: new Date().toISOString(),
+      screenshotDataUrl: dataUrl
+    });
+  } catch {
+    // never block execution for screenshot failure
+  }
+}
+
 export async function handleBrowserTask(
+  context: RunContext,
+  task: AgentTask,
+  logger: Logger
+): Promise<TaskExecutionOutput> {
+  const result = await executeBrowserAction(context, task, logger);
+  await captureAndPublishScreenshot(context, task.id);
+  return result;
+}
+
+async function executeBrowserAction(
   context: RunContext,
   task: AgentTask,
   logger: Logger

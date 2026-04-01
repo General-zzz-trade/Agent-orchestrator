@@ -10,6 +10,7 @@ import { reflectOnRun, saveReflectionToFile } from "../reflector";
 import { stopApp } from "../shell";
 import { createUsageLedger, finalizeUsageLedger } from "../usage-ledger";
 import { AgentPolicy, PlannerTieBreakerPolicy, RunContext, RunLimits, TerminationReason } from "../types";
+import { publishEvent, closeEmitter } from "../streaming/event-bus";
 
 export interface RunOptions {
   maxReplansPerRun?: number;
@@ -100,6 +101,14 @@ export async function runGoal(goal: string, options: RunOptions = {}): Promise<R
         summaries.push(`Observed failure in ${task.id}: ${message}`);
         summaries.push(`Replan decision: ${decision.reason}`);
 
+        publishEvent({
+          type: "replan",
+          runId: context.runId,
+          taskId: task.id,
+          timestamp: new Date().toISOString(),
+          message: decision.reason
+        });
+
         if (decision.abort && decision.reason.includes("budget exceeded")) {
           throw new Error(decision.reason);
         }
@@ -150,6 +159,15 @@ export async function runGoal(goal: string, options: RunOptions = {}): Promise<R
     extractKnowledgeFromRun(context);
     await saveReflectionToFile(context.reflection);
     await saveRun(context);
+
+    publishEvent({
+      type: "run_complete",
+      runId: context.runId,
+      timestamp: new Date().toISOString(),
+      success: context.result?.success ?? false,
+      message: context.result?.message ?? ""
+    });
+    closeEmitter(context.runId);
   }
 
   return context;
