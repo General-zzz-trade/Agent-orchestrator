@@ -1,5 +1,8 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
+import staticFiles from "@fastify/static";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { runsRoutes } from "./routes/runs";
 import { streamRoutes } from "./routes/stream";
 import { authPlugin, initApiKeysTable, createApiKey } from "./plugins/auth";
@@ -12,6 +15,11 @@ export async function buildServer() {
   const app = Fastify({ logger: false });
 
   await app.register(cors, { origin: true });
+
+  // Serve Web UI from public/ directory
+  const publicDir = join(fileURLToPath(import.meta.url), "../../../public");
+  await app.register(staticFiles, { root: publicDir, prefix: "/" });
+
   await app.register(authPlugin);
   await app.register(runsRoutes, { prefix: "/api/v1" });
   await app.register(streamRoutes, { prefix: "/api/v1" });
@@ -61,6 +69,7 @@ async function main() {
   const app = await buildServer();
   await app.listen({ port, host });
   console.log(`Agent API listening on http://${host}:${port}`);
+  console.log(`  GET  /                   - Web UI 控制台`);
   console.log(`  POST /api/v1/runs        - submit goal (async)`);
   console.log(`  GET  /api/v1/runs        - list runs`);
   console.log(`  GET  /api/v1/runs/:id    - run detail`);
