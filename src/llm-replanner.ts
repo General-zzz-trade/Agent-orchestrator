@@ -5,6 +5,7 @@ import { TaskBlueprint } from "./planner/task-id";
 import {
   LLMProviderConfig,
   callOpenAICompatible,
+  callAnthropic,
   readProviderConfig,
   safeJsonParse,
   unwrapTasksPayload
@@ -60,6 +61,14 @@ export function createReplannerFromEnv(): LLMReplanner | undefined {
     }
 
     return createOpenAICompatibleReplanner(config);
+  }
+
+  if (config.provider === "anthropic") {
+    if (!config.apiKey) {
+      return undefined;
+    }
+
+    return createAnthropicReplanner(config);
   }
 
   return undefined;
@@ -120,6 +129,42 @@ function createOpenAICompatibleReplanner(config: LLMReplannerConfig): LLMReplann
     config,
     async replan(input: LLMReplannerInput): Promise<TaskBlueprint[]> {
       const raw = await callOpenAICompatible(
+        config,
+        [
+          { role: "system", content: REPLANNER_SYSTEM_PROMPT },
+          {
+            role: "user",
+            content: JSON.stringify({
+              goal: input.goal,
+              currentTask: input.currentTask,
+              currentError: input.currentError,
+              recentRunsSummary: input.recentRunsSummary,
+              failurePatterns: input.failurePatterns,
+              currentTaskListSnapshot: input.currentTaskListSnapshot
+            })
+          }
+        ],
+        "LLM replanner"
+      );
+
+      const parsed = safeJsonParse(unwrapTasksPayload(raw));
+
+      if (!Array.isArray(parsed)) {
+        throw new Error("LLM replanner response was not a JSON task array.");
+      }
+
+      return parsed
+        .map((item) => normalizeTaskBlueprint(item))
+        .filter((item): item is TaskBlueprint => item !== undefined);
+    }
+  };
+}
+
+function createAnthropicReplanner(config: LLMReplannerConfig): LLMReplanner {
+  return {
+    config,
+    async replan(input: LLMReplannerInput): Promise<TaskBlueprint[]> {
+      const raw = await callAnthropic(
         config,
         [
           { role: "system", content: REPLANNER_SYSTEM_PROMPT },

@@ -3,6 +3,7 @@ import { AgentTask, RunMetrics, RunContext, TerminationReason } from "./types";
 import {
   LLMProviderConfig,
   callOpenAICompatible,
+  callAnthropic,
   readProviderConfig,
   safeJsonParse
 } from "./llm/provider";
@@ -58,6 +59,14 @@ export function createDiagnoserFromEnv(): LLMDiagnoser | undefined {
     return createOpenAICompatibleDiagnoser(config);
   }
 
+  if (config.provider === "anthropic") {
+    if (!config.apiKey) {
+      return undefined;
+    }
+
+    return createAnthropicDiagnoser(config);
+  }
+
   return undefined;
 }
 
@@ -110,6 +119,34 @@ function createOpenAICompatibleDiagnoser(config: LLMDiagnoserConfig): LLMDiagnos
     config,
     async diagnose(input: LLMDiagnoserInput): Promise<LLMDiagnoserOutput> {
       const raw = await callOpenAICompatible(
+        config,
+        [
+          { role: "system", content: DIAGNOSER_SYSTEM_PROMPT },
+          { role: "user", content: JSON.stringify(input) }
+        ],
+        "LLM diagnoser"
+      );
+
+      const parsed = safeJsonParse(raw);
+      if (!parsed || typeof parsed !== "object") {
+        throw new Error("LLM diagnoser response was not a JSON object.");
+      }
+
+      const normalized = normalizeDiagnoserOutput(parsed);
+      if (!normalized) {
+        throw new Error("LLM diagnoser output failed schema validation.");
+      }
+
+      return normalized;
+    }
+  };
+}
+
+function createAnthropicDiagnoser(config: LLMDiagnoserConfig): LLMDiagnoser {
+  return {
+    config,
+    async diagnose(input: LLMDiagnoserInput): Promise<LLMDiagnoserOutput> {
+      const raw = await callAnthropic(
         config,
         [
           { role: "system", content: DIAGNOSER_SYSTEM_PROMPT },

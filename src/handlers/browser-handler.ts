@@ -13,6 +13,7 @@ import {
 import { AgentTask, RunArtifact, RunContext } from "../types";
 import { publishEvent } from "../streaming/event-bus";
 import { startScreencast } from "../streaming/screencast";
+import { restoreSession, captureSession, extractDomain, isPasswordSelector } from "../auth/session-manager";
 
 export interface TaskExecutionOutput {
   summary: string;
@@ -54,16 +55,29 @@ async function executeBrowserAction(
   switch (task.type) {
     case "open_page": {
       const url = readString(task, "url");
+      const domain = extractDomain(url);
+      const tenantId = context.tenantId ?? "default";
       const isFirstPage = !context.browserSession;
       const session = await getOrCreateBrowserSession(context);
+
+      // Restore saved session cookies before navigating
+      const restored = await restoreSession(session.context, tenantId, domain);
+      if (restored) {
+        logger.info(`Restored saved session for ${domain}`);
+      }
+
       logger.info(`Opening page: ${url}`);
       const title = await openPage(session, url);
+
+      // Capture any cookies set during navigation (e.g., CSRF tokens)
+      await captureSession(session.context, tenantId, domain);
+
       // Start continuous screencast on first page open (replaces per-action screenshots)
       if (isFirstPage && session.page && !context.screencastSession) {
         context.screencastSession = await startScreencast(session.page, context.runId).catch(() => undefined);
       }
       return {
-        summary: `Opened page: ${url} (${title})`
+        summary: `Opened page: ${url} (${title})${restored ? " [session restored]" : ""}`
       };
     }
 
@@ -72,6 +86,18 @@ async function executeBrowserAction(
       const session = requireBrowserSession(context, task.type);
       logger.info(`Clicking: ${selector}`);
       await clickElement(session, selector);
+
+      // Capture session after clicking login/submit buttons (heuristic)
+      const lowerSelector = selector.toLowerCase();
+      if (lowerSelector.includes("login") || lowerSelector.includes("sign") || lowerSelector.includes("submit")) {
+        const tenantId = context.tenantId ?? "default";
+        const currentUrl = session.page.url();
+        const domain = extractDomain(currentUrl);
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        await captureSession(session.context, tenantId, domain);
+        logger.info(`Captured session for ${domain} after login click`);
+      }
+
       return {
         summary: `Clicked: ${selector}`
       };
@@ -83,6 +109,20 @@ async function executeBrowserAction(
       const session = requireBrowserSession(context, task.type);
       logger.info(`Typing into: ${selector}`);
       await typeIntoElement(session, selector, text);
+
+      // Auto-capture session after typing into a password field (login heuristic)
+      if (isPasswordSelector(selector)) {
+        const tenantId = context.tenantId ?? "default";
+        const currentUrl = session.page.url();
+        const domain = extractDomain(currentUrl);
+        logger.info(`Password field detected — will capture session for ${domain}`);
+        setTimeout(async () => {
+          try {
+            await captureSession(session.context, tenantId, domain);
+          } catch { /* never block execution */ }
+        }, 2000);
+      }
+
       return {
         summary: `Typed into: ${selector}`
       };

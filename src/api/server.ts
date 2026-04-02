@@ -8,10 +8,13 @@ import { streamRoutes } from "./routes/stream";
 import { schedulesRoutes } from "./routes/schedules";
 import { memoryRoutes } from "./routes/memory";
 import { toolsRoutes } from "./routes/tools";
+import { approvalsRoutes } from "./routes/approvals";
+import { sessionsRoutes } from "./routes/sessions";
 import { authPlugin, initApiKeysTable, createApiKey } from "./plugins/auth";
 import { initSchedulesTable } from "../scheduler/store";
 import { startScheduler } from "../scheduler/engine";
 import { initUserMemoryTable } from "../user-memory/store";
+import { initSessionTable } from "../auth/session-store";
 import { renderPrometheus } from "../observability/metrics-store";
 import { listPlugins } from "../plugins/registry";
 import { getKnowledgeStats } from "../knowledge/store";
@@ -22,6 +25,7 @@ export async function buildServer() {
   initSchedulesTable();
   initUserMemoryTable();
   initAuditTable();
+  initSessionTable();
   const app = Fastify({ logger: false });
 
   await app.register(cors, { origin: true });
@@ -39,6 +43,8 @@ export async function buildServer() {
   await app.register(schedulesRoutes, { prefix: "/api/v1" });
   await app.register(memoryRoutes, { prefix: "/api/v1" });
   await app.register(toolsRoutes, { prefix: "/api/v1" });
+  await app.register(approvalsRoutes, { prefix: "/api/v1" });
+  await app.register(sessionsRoutes, { prefix: "/api/v1" });
 
   app.get("/health", async () => ({
     status: "ok",
@@ -97,6 +103,10 @@ async function main() {
   console.log(`  POST /api/v1/keys        - create API key`);
   console.log(`  GET  /api/v1/knowledge/stats     - knowledge base stats`);
   console.log(`  GET/POST /api/v1/schedules       - cron schedule management`);
+  console.log(`  GET  /api/v1/approvals           - list pending approvals`);
+  console.log(`  POST /api/v1/approvals/:id/respond - approve/reject task`);
+  console.log(`  GET  /api/v1/sessions            - list saved sessions`);
+  console.log(`  DELETE /api/v1/sessions/:domain   - delete session`);
   console.log(`  Set AGENT_API_AUTH=false to disable auth (dev mode)`);
 }
 

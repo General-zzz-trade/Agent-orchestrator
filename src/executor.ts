@@ -59,6 +59,23 @@ async function dispatchTask(
   task: AgentTask,
   logger: Logger
 ): Promise<TaskExecutionOutput> {
+  // Check if human approval is required before executing this task
+  if (context.policy?.approval?.enabled) {
+    const { requiresApproval, requestApproval } = await import("./approval/gate");
+    if (requiresApproval(task.type, task.payload as Record<string, unknown>, context.policy.approval)) {
+      const approval = await requestApproval({
+        runId: context.runId,
+        taskId: task.id,
+        taskType: task.type,
+        taskPayload: task.payload as Record<string, unknown>,
+        reason: `Task type "${task.type}" requires human approval`
+      });
+      if (approval.status === "rejected") {
+        throw new Error(`Task ${task.id} rejected by human reviewer`);
+      }
+    }
+  }
+
   // Check plugin registry first (allows overriding built-in actions)
   const pluginHandler = getActionHandler(task.type);
   if (pluginHandler) {

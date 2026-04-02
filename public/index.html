@@ -233,6 +233,68 @@
     .task-status { float: right; }
     .empty-state { padding: 32px 14px; text-align: center; color: var(--muted); font-size: 12px; }
 
+    /* ── Approval Banner ── */
+    .approval-banner {
+      background: #451a03;
+      border: 1px solid var(--yellow);
+      border-radius: 6px;
+      padding: 12px 14px;
+      margin: 8px 14px;
+      animation: approval-pulse 2s ease-in-out infinite;
+    }
+    @keyframes approval-pulse {
+      0%, 100% { border-color: var(--yellow); }
+      50% { border-color: #f59e0b80; }
+    }
+    .approval-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--yellow);
+      margin-bottom: 8px;
+    }
+    .approval-detail {
+      font-size: 11px;
+      color: var(--text);
+      margin-bottom: 4px;
+      line-height: 1.5;
+    }
+    .approval-detail .label {
+      color: var(--muted);
+      margin-right: 4px;
+    }
+    .approval-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .btn-approve {
+      background: var(--green);
+      color: #fff;
+      padding: 5px 14px;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      font-family: var(--font);
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .btn-approve:hover { opacity: 0.85; }
+    .btn-reject {
+      background: var(--red);
+      color: #fff;
+      padding: 5px 14px;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      font-family: var(--font);
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .btn-reject:hover { opacity: 0.85; }
+
     /* ── Scrollbar ── */
     ::-webkit-scrollbar { width: 4px; }
     ::-webkit-scrollbar-track { background: transparent; }
@@ -293,6 +355,7 @@
       <div id="live-badge" style="display:none;position:absolute;top:8px;right:8px;background:#e53e3e;color:#fff;font-size:11px;font-weight:700;padding:2px 7px;border-radius:4px;letter-spacing:1px;">● LIVE</div>
     </div>
     <div class="panel-header">事件流</div>
+    <div id="approval-container"></div>
     <div id="event-log" class="event-log">
       <div class="empty-state">提交目标后，这里会实时显示执行过程</div>
     </div>
@@ -426,6 +489,12 @@
   let _liveBadgeTimer = null;
 
   function handleEvent(evt) {
+    if (evt.type === 'approval_required' && evt.payload) {
+      showApprovalBanner(evt);
+      addEvent(evt);
+      return;
+    }
+
     if (evt.type === 'screenshot' && evt.screenshotDataUrl) {
       const img = document.getElementById('screenshot-img');
       const ph = document.getElementById('screenshot-placeholder');
@@ -475,6 +544,7 @@
     run_complete:  { icon: '★', cls: 'ev-complete', label: 'COMPLETE' },
     log:           { icon: '·', cls: 'ev-log',    label: 'LOG' },
     error:         { icon: '!', cls: 'ev-failed',  label: 'ERROR' },
+    approval_required: { icon: '\u23F8', cls: 'ev-replan', label: 'APPROVAL' },
   };
 
   function addEvent(evt) {
@@ -621,6 +691,84 @@
   document.getElementById('goal-input').addEventListener('keydown', e => {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submitGoal();
   });
+
+  // ── Approval Gate ──
+  function makeDetailRow(label, value) {
+    const div = document.createElement('div');
+    div.className = 'approval-detail';
+    const span = document.createElement('span');
+    span.className = 'label';
+    span.textContent = label;
+    div.appendChild(span);
+    div.appendChild(document.createTextNode(value));
+    return div;
+  }
+
+  function showApprovalBanner(evt) {
+    const container = document.getElementById('approval-container');
+    const approvalId = evt.payload.approvalId;
+    const reason = evt.payload.reason || '';
+    const taskPayload = evt.payload.taskPayload || {};
+    const payloadStr = Object.entries(taskPayload)
+      .map(function(pair) { return pair[0] + ': ' + String(pair[1]).slice(0,80); })
+      .join(', ');
+
+    const banner = document.createElement('div');
+    banner.className = 'approval-banner';
+    banner.id = 'approval-' + approvalId;
+
+    const headerDiv = document.createElement('div');
+    headerDiv.className = 'approval-header';
+    headerDiv.textContent = 'Approval Required';
+    banner.appendChild(headerDiv);
+
+    banner.appendChild(makeDetailRow('Task: ', evt.taskType || ''));
+    banner.appendChild(makeDetailRow('Reason: ', reason));
+    if (payloadStr) banner.appendChild(makeDetailRow('Payload: ', payloadStr));
+
+    const actionsDiv = document.createElement('div');
+    actionsDiv.className = 'approval-actions';
+
+    const approveBtn = document.createElement('button');
+    approveBtn.className = 'btn-approve';
+    approveBtn.textContent = 'Approve';
+    approveBtn.addEventListener('click', function() { respondApproval(approvalId, true); });
+
+    const rejectBtn = document.createElement('button');
+    rejectBtn.className = 'btn-reject';
+    rejectBtn.textContent = 'Reject';
+    rejectBtn.addEventListener('click', function() { respondApproval(approvalId, false); });
+
+    actionsDiv.appendChild(approveBtn);
+    actionsDiv.appendChild(rejectBtn);
+    banner.appendChild(actionsDiv);
+
+    container.prepend(banner);
+  }
+
+  async function respondApproval(approvalId, approved) {
+    var banner = document.getElementById('approval-' + approvalId);
+    try {
+      var resp = await fetch(apiBase + '/api/v1/approvals/' + approvalId + '/respond', {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ approved: approved })
+      });
+      if (!resp.ok) {
+        var txt = await resp.text();
+        addEvent({ type: 'error', message: 'Approval response failed: ' + resp.status + ' ' + txt, timestamp: new Date().toISOString() });
+        return;
+      }
+      if (banner) banner.remove();
+      addEvent({
+        type: 'log',
+        message: (approved ? 'Task approved' : 'Task rejected') + ' (' + approvalId.slice(0,8) + ')',
+        timestamp: new Date().toISOString()
+      });
+    } catch (e) {
+      addEvent({ type: 'error', message: 'Approval error: ' + e.message, timestamp: new Date().toISOString() });
+    }
+  }
 
   // ── Init ──
   loadHistory();

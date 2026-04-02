@@ -21,6 +21,7 @@ export interface RunOptions {
   maxLLMReplannerTimeouts?: number;
   tieBreakerPolicy?: Partial<PlannerTieBreakerPolicy>;
   policy?: Partial<AgentPolicy>;
+  tenantId?: string;
 }
 
 export async function runGoal(goal: string, options: RunOptions = {}): Promise<RunContext> {
@@ -47,6 +48,7 @@ export async function runGoal(goal: string, options: RunOptions = {}): Promise<R
 
   const context: RunContext = {
     runId,
+    tenantId: options.tenantId ?? "default",
     plannerUsed: planResult.plannerUsed,
     plannerDecisionTrace: planResult.decisionTrace,
     plannerTieBreakerPolicy: tieBreakerPolicy,
@@ -148,6 +150,8 @@ export async function runGoal(goal: string, options: RunOptions = {}): Promise<R
     context.terminationReason = determineTerminationReason(message);
   } finally {
     context.endedAt = new Date().toISOString();
+    const { clearApprovals } = await import("../approval/gate");
+    clearApprovals(context.runId);
     await context.screencastSession?.stop();
     context.screencastSession = undefined;
     await closeBrowserSession(context.browserSession);

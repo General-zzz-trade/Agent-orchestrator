@@ -21,7 +21,7 @@ async function processJob(job: JobRequest): Promise<void> {
   incCounter("agent_runs_total");
   updateQueueGauges();
   try {
-    const ctx = await runGoal(job.goal, job.options as never);
+    const ctx = await runGoal(job.goal, { ...(job.options as Record<string, unknown>), tenantId: job.tenantId } as never);
     // Persist with tenant scoping
     upsertRun(ctx, job.tenantId);
     if (ctx.result?.success) {

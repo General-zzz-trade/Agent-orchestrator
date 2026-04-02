@@ -5,6 +5,7 @@ import { TaskBlueprint } from "./planner/task-id";
 import {
   LLMProviderConfig,
   callOpenAICompatible,
+  callAnthropic,
   readProviderConfig,
   safeJsonParse,
   unwrapTasksPayload
@@ -58,6 +59,14 @@ export function createPlannerFromEnv(): LLMPlanner | undefined {
     }
 
     return createOpenAICompatiblePlanner(config);
+  }
+
+  if (config.provider === "anthropic") {
+    if (!config.apiKey) {
+      return undefined;
+    }
+
+    return createAnthropicPlanner(config);
   }
 
   return undefined;
@@ -122,6 +131,43 @@ function createOpenAICompatiblePlanner(config: LLMPlannerConfig): LLMPlanner {
       const enrichedGoal = input.goal + knowledgeContext;
 
       const raw = await callOpenAICompatible(
+        config,
+        [
+          { role: "system", content: PLANNER_SYSTEM_PROMPT },
+          {
+            role: "user",
+            content: JSON.stringify({
+              goal: enrichedGoal,
+              recentRunsSummary: input.recentRunsSummary,
+              failurePatterns: input.failurePatterns
+            })
+          }
+        ],
+        "LLM planner"
+      );
+
+      const parsed = safeJsonParse(unwrapTasksPayload(raw));
+
+      if (!Array.isArray(parsed)) {
+        throw new Error("LLM planner response was not a JSON task array.");
+      }
+
+      return parsed
+        .map((item) => normalizeTaskBlueprint(item))
+        .filter((item): item is TaskBlueprint => item !== undefined);
+    }
+  };
+}
+
+function createAnthropicPlanner(config: LLMPlannerConfig): LLMPlanner {
+  return {
+    config,
+    async plan(input: LLMPlannerInput): Promise<TaskBlueprint[]> {
+      const domain = extractDomainFromGoal(input.goal);
+      const knowledgeContext = buildKnowledgeContext(input.goal, domain);
+      const enrichedGoal = input.goal + knowledgeContext;
+
+      const raw = await callAnthropic(
         config,
         [
           { role: "system", content: PLANNER_SYSTEM_PROMPT },

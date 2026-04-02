@@ -182,6 +182,11 @@ export interface AgentPolicy {
   replannerCostMode: EscalationPolicyMode;
   preferRuleSystemsOnCheapGoals: boolean;
   allowLLMReplannerForSimpleFailures: boolean;
+  approval?: {
+    enabled: boolean;
+    requireApproval: string[];
+    autoApproveTimeout?: number;
+  };
 }
 
 export interface UsageLedger {
@@ -214,6 +219,7 @@ export interface RunLimits {
 
 export interface RunContext {
   runId: string;
+  tenantId?: string;
   plannerUsed?: "template" | "regex" | "llm" | "none";
   plannerDecisionTrace?: PlannerDecisionTrace;
   plannerTieBreakerPolicy?: PlannerTieBreakerPolicy;

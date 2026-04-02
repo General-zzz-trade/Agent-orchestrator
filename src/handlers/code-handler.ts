@@ -1,10 +1,22 @@
 import { execFileNoThrow } from "../utils/execFileNoThrow";
+import { isDockerAvailable, runInDocker } from "../sandbox/docker-runner";
 import type { RunContext, AgentTask } from "../types";
 import type { TaskExecutionOutput } from "./browser-handler";
 import { mkdirSync, writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomBytes } from "node:crypto";
+
+// Memoized Docker availability — resolved once on first use
+let _dockerReady: Promise<boolean> | undefined;
+let _dockerWarned = false;
+
+function getDockerReady(): Promise<boolean> {
+  if (!_dockerReady) {
+    _dockerReady = isDockerAvailable();
+  }
+  return _dockerReady;
+}
 
 export async function handleCodeTask(
   context: RunContext,
@@ -23,27 +35,49 @@ export async function handleCodeTask(
     throw new Error(`run_code: unsupported language "${language}". Use: ${supported.join(", ")}`);
   }
 
-  // Write code to a temp file
-  const tmpDir = join(tmpdir(), "agent-code");
-  mkdirSync(tmpDir, { recursive: true });
-  const ext = language === "javascript" ? "mjs" : language === "python" ? "py" : "sh";
-  const filename = `${randomBytes(8).toString("hex")}.${ext}`;
-  const filepath = join(tmpDir, filename);
-  writeFileSync(filepath, code, "utf8");
+  const dockerAvailable = await getDockerReady();
 
   let result: { stdout: string; stderr: string; status: number };
 
-  try {
-    if (language === "javascript") {
-      result = await execFileNoThrow("node", [filepath], { timeoutMs });
-    } else if (language === "python") {
-      result = await execFileNoThrow("python3", [filepath], { timeoutMs });
-    } else {
-      // shell — use sh, pass filepath as arg (never interpolate into shell string)
-      result = await execFileNoThrow("sh", [filepath], { timeoutMs });
+  if (dockerAvailable) {
+    // Execute in Docker sandbox
+    const sandboxResult = await runInDocker({
+      language: language as "javascript" | "python" | "shell",
+      code,
+      timeoutMs
+    });
+    result = {
+      stdout: sandboxResult.stdout,
+      stderr: sandboxResult.stderr,
+      status: sandboxResult.exitCode
+    };
+  } else {
+    // Fallback: host execution (unsafe — warn once)
+    if (!_dockerWarned) {
+      _dockerWarned = true;
+      console.warn("[run_code] Docker not available — executing code directly on host. This is unsafe for production.");
     }
-  } finally {
-    try { unlinkSync(filepath); } catch { /* ignore cleanup errors */ }
+
+    // Write code to a temp file
+    const tmpDir = join(tmpdir(), "agent-code");
+    mkdirSync(tmpDir, { recursive: true });
+    const ext = language === "javascript" ? "mjs" : language === "python" ? "py" : "sh";
+    const filename = `${randomBytes(8).toString("hex")}.${ext}`;
+    const filepath = join(tmpDir, filename);
+    writeFileSync(filepath, code, "utf8");
+
+    try {
+      if (language === "javascript") {
+        result = await execFileNoThrow("node", [filepath], { timeoutMs });
+      } else if (language === "python") {
+        result = await execFileNoThrow("python3", [filepath], { timeoutMs });
+      } else {
+        // shell — use sh, pass filepath as arg (never interpolate into shell string)
+        result = await execFileNoThrow("sh", [filepath], { timeoutMs });
+      }
+    } finally {
+      try { unlinkSync(filepath); } catch { /* ignore cleanup errors */ }
+    }
   }
 
   const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();

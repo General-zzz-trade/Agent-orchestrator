@@ -27,9 +27,11 @@ export function readProviderConfig(
   envPrefix: string,
   defaults: { model?: string; maxTokens?: number; temperature?: number } = {}
 ): LLMProviderConfig {
+  const provider = process.env[`${envPrefix}_PROVIDER`]?.trim() ?? "";
+  const defaultModel = provider === "anthropic" ? "claude-sonnet-4-20250514" : (defaults.model || "gpt-4.1-mini");
   return {
-    provider: process.env[`${envPrefix}_PROVIDER`]?.trim() ?? "",
-    model: process.env[`${envPrefix}_MODEL`]?.trim() || defaults.model || "gpt-4.1-mini",
+    provider,
+    model: process.env[`${envPrefix}_MODEL`]?.trim() || defaultModel,
     timeoutMs: Number(process.env[`${envPrefix}_TIMEOUT_MS`] ?? 8000),
     maxTokens: Number(process.env[`${envPrefix}_MAX_TOKENS`] ?? defaults.maxTokens ?? 600),
     temperature: Number(process.env[`${envPrefix}_TEMPERATURE`] ?? defaults.temperature ?? 0.1),
@@ -76,6 +78,76 @@ export async function callOpenAICompatible(
       choices?: Array<{ message?: { content?: string } }>;
     };
     const content = body.choices?.[0]?.message?.content;
+
+    if (!content) {
+      throw new Error(`${callerName} returned empty content.`);
+    }
+
+    return content;
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`${callerName} timed out after ${config.timeoutMs}ms.`);
+    }
+
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/**
+ * Calls the Anthropic Messages API and returns the raw text content from the
+ * first content block.  Throws on HTTP errors, timeouts, or empty responses.
+ * `callerName` is used only in error messages.
+ *
+ * The `messages` param follows the same `LLMMessage[]` convention used by
+ * `callOpenAICompatible`.  System-role messages are extracted and sent via the
+ * top-level `system` field; the remaining user messages are forwarded in the
+ * `messages` array.
+ */
+export async function callAnthropic(
+  config: LLMProviderConfig,
+  messages: LLMMessage[],
+  callerName = "LLM"
+): Promise<string> {
+  const baseUrl = config.baseUrl || "https://api.anthropic.com";
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), config.timeoutMs);
+
+  try {
+    const systemParts = messages.filter((m) => m.role === "system").map((m) => m.content);
+    const userMessages = messages.filter((m) => m.role !== "system");
+
+    const body: Record<string, unknown> = {
+      model: config.model,
+      max_tokens: config.maxTokens,
+      temperature: config.temperature,
+      messages: userMessages.map((m) => ({ role: m.role, content: m.content }))
+    };
+
+    if (systemParts.length > 0) {
+      body.system = systemParts.join("\n\n");
+    }
+
+    const response = await fetch(`${baseUrl}/v1/messages`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": config.apiKey ?? "",
+        "anthropic-version": "2023-06-01"
+      },
+      signal: controller.signal,
+      body: JSON.stringify(body)
+    });
+
+    if (!response.ok) {
+      throw new Error(`${callerName} HTTP ${response.status}`);
+    }
+
+    const responseBody = (await response.json()) as {
+      content?: Array<{ type?: string; text?: string }>;
+    };
+    const content = responseBody.content?.[0]?.text;
 
     if (!content) {
       throw new Error(`${callerName} returned empty content.`);

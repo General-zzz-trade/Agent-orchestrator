@@ -6,6 +6,7 @@ import { CREATE_KNOWLEDGE_TABLE } from "../knowledge/store";
 import { CREATE_SCHEDULES_TABLE } from "../scheduler/store";
 import { CREATE_USER_MEMORY_TABLE } from "../user-memory/store";
 import { CREATE_AUDIT_TABLE } from "../api/security";
+import { CREATE_SESSIONS_TABLE } from "../auth/session-store";
 
 let _db: Database.Database | null = null;
 
@@ -24,6 +25,7 @@ export function getDb(): Database.Database {
   _db.exec(CREATE_SCHEDULES_TABLE);
   _db.exec(CREATE_USER_MEMORY_TABLE);
   _db.exec(CREATE_AUDIT_TABLE);
+  _db.exec(CREATE_SESSIONS_TABLE);
   runMigrations(_db);
 
   return _db;
