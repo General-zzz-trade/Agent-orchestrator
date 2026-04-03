@@ -138,7 +138,7 @@ async function verifyByLLM(
   ];
 
   try {
-    const raw = config.provider === "anthropic"
+    const { content: raw } = config.provider === "anthropic"
       ? await callAnthropic(config, messages, "GoalVerifier")
       : await callOpenAICompatible(config, messages, "GoalVerifier");
 

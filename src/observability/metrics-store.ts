@@ -57,3 +57,6 @@ registerCounter("agent_llm_calls_total", "Total LLM API calls");
 registerGauge("agent_queue_pending", "Jobs waiting in queue");
 registerGauge("agent_queue_running", "Jobs currently running");
 registerGauge("agent_queue_concurrency", "Queue concurrency limit");
+registerCounter("agent_llm_input_tokens_total", "Total LLM input tokens consumed");
+registerCounter("agent_llm_output_tokens_total", "Total LLM output tokens consumed");
+registerCounter("agent_llm_latency_ms_total", "Total LLM call latency in milliseconds");

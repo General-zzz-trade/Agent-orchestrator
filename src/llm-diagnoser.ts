@@ -118,7 +118,7 @@ function createOpenAICompatibleDiagnoser(config: LLMDiagnoserConfig): LLMDiagnos
   return {
     config,
     async diagnose(input: LLMDiagnoserInput): Promise<LLMDiagnoserOutput> {
-      const raw = await callOpenAICompatible(
+      const { content: raw } = await callOpenAICompatible(
         config,
         [
           { role: "system", content: DIAGNOSER_SYSTEM_PROMPT },
@@ -146,7 +146,7 @@ function createAnthropicDiagnoser(config: LLMDiagnoserConfig): LLMDiagnoser {
   return {
     config,
     async diagnose(input: LLMDiagnoserInput): Promise<LLMDiagnoserOutput> {
-      const raw = await callAnthropic(
+      const { content: raw } = await callAnthropic(
         config,
         [
           { role: "system", content: DIAGNOSER_SYSTEM_PROMPT },

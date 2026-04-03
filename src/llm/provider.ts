@@ -4,6 +4,8 @@
  * so the HTTP call, timeout handling, and JSON helpers live here once.
  */
 
+import { incCounter } from "../observability/metrics-store";
+
 export interface LLMProviderConfig {
   provider: string;
   model: string;
@@ -115,7 +117,12 @@ export async function callOpenAICompatible(
     }
 
     const usage = parseOpenAIUsage((body as Record<string, unknown>).usage);
-    return { content, usage, latencyMs: Date.now() - start };
+    const latencyMs = Date.now() - start;
+    incCounter("agent_llm_calls_total");
+    incCounter("agent_llm_input_tokens_total", usage.inputTokens);
+    incCounter("agent_llm_output_tokens_total", usage.outputTokens);
+    incCounter("agent_llm_latency_ms_total", latencyMs);
+    return { content, usage, latencyMs };
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
       throw new Error(`${callerName} timed out after ${config.timeoutMs}ms.`);
@@ -187,7 +194,12 @@ export async function callAnthropic(
     }
 
     const usage = parseAnthropicUsage((responseBody as Record<string, unknown>).usage);
-    return { content, usage, latencyMs: Date.now() - start };
+    const latencyMs = Date.now() - start;
+    incCounter("agent_llm_calls_total");
+    incCounter("agent_llm_input_tokens_total", usage.inputTokens);
+    incCounter("agent_llm_output_tokens_total", usage.outputTokens);
+    incCounter("agent_llm_latency_ms_total", latencyMs);
+    return { content, usage, latencyMs };
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
       throw new Error(`${callerName} timed out after ${config.timeoutMs}ms.`);

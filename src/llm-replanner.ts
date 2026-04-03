@@ -128,7 +128,7 @@ function createOpenAICompatibleReplanner(config: LLMReplannerConfig): LLMReplann
   return {
     config,
     async replan(input: LLMReplannerInput): Promise<TaskBlueprint[]> {
-      const raw = await callOpenAICompatible(
+      const { content: raw } = await callOpenAICompatible(
         config,
         [
           { role: "system", content: REPLANNER_SYSTEM_PROMPT },
@@ -164,7 +164,7 @@ function createAnthropicReplanner(config: LLMReplannerConfig): LLMReplanner {
   return {
     config,
     async replan(input: LLMReplannerInput): Promise<TaskBlueprint[]> {
-      const raw = await callAnthropic(
+      const { content: raw } = await callAnthropic(
         config,
         [
           { role: "system", content: REPLANNER_SYSTEM_PROMPT },

@@ -10,7 +10,7 @@ import {
   safeJsonParse,
   unwrapTasksPayload
 } from "./llm/provider";
-import { buildKnowledgeContext, extractDomainFromGoal } from "./knowledge/planner-context";
+import { buildKnowledgeContext, buildPlanningPriors, extractDomainFromGoal } from "./knowledge/planner-context";
 
 export type LLMPlannerConfig = LLMProviderConfig;
 
@@ -128,16 +128,18 @@ function createOpenAICompatiblePlanner(config: LLMPlannerConfig): LLMPlanner {
     async plan(input: LLMPlannerInput): Promise<TaskBlueprint[]> {
       const domain = extractDomainFromGoal(input.goal);
       const knowledgeContext = buildKnowledgeContext(input.goal, domain);
-      const enrichedGoal = input.goal + knowledgeContext;
+      const planningPriors = buildPlanningPriors(input.goal, domain);
 
-      const raw = await callOpenAICompatible(
+      const { content: raw } = await callOpenAICompatible(
         config,
         [
           { role: "system", content: PLANNER_SYSTEM_PROMPT },
           {
             role: "user",
             content: JSON.stringify({
-              goal: enrichedGoal,
+              goal: input.goal,
+              knowledgeContext,
+              planningPriors,
               recentRunsSummary: input.recentRunsSummary,
               failurePatterns: input.failurePatterns
             })
@@ -165,16 +167,18 @@ function createAnthropicPlanner(config: LLMPlannerConfig): LLMPlanner {
     async plan(input: LLMPlannerInput): Promise<TaskBlueprint[]> {
       const domain = extractDomainFromGoal(input.goal);
       const knowledgeContext = buildKnowledgeContext(input.goal, domain);
-      const enrichedGoal = input.goal + knowledgeContext;
+      const planningPriors = buildPlanningPriors(input.goal, domain);
 
-      const raw = await callAnthropic(
+      const { content: raw } = await callAnthropic(
         config,
         [
           { role: "system", content: PLANNER_SYSTEM_PROMPT },
           {
             role: "user",
             content: JSON.stringify({
-              goal: enrichedGoal,
+              goal: input.goal,
+              knowledgeContext,
+              planningPriors,
               recentRunsSummary: input.recentRunsSummary,
               failurePatterns: input.failurePatterns
             })
