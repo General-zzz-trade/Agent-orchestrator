@@ -1,4 +1,5 @@
 import { ChildProcess, spawn } from "node:child_process";
+import { resolve, join } from "node:path";
 
 export interface AppProcessHandle {
   process: ChildProcess;
@@ -6,10 +7,18 @@ export interface AppProcessHandle {
 }
 
 export function startApp(command: string, cwd = process.cwd()): AppProcessHandle {
+  const nodeModulesBin = resolve(cwd, "node_modules", ".bin");
+  const pathSeparator = process.platform === "win32" ? ";" : ":";
+  const env = {
+    ...process.env,
+    PATH: `${nodeModulesBin}${pathSeparator}${process.env.PATH ?? ""}`
+  };
+
   const child = spawn(command, {
     cwd,
     shell: true,
-    stdio: "inherit"
+    stdio: "inherit",
+    env
   });
 
   return {
