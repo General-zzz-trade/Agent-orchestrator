@@ -98,14 +98,18 @@ function extractFailureLessons(context: RunContext, domain: string): void {
 
     // Did a replan recovery of the same task type succeed?
     const recovered = recoveredTaskTypes.has(task.type);
-    const recoveryHint = inferRecovery(context, task);
+    const proceduralMemory = inferProceduralMemory(context, task);
 
     upsertLesson({
       taskType: task.type,
       errorPattern,
       domain: domain || undefined,
-      recovery: recoveryHint,
-      successCount: recovered ? 1 : 0
+      recovery: proceduralMemory.recovery,
+      successCount: recovered ? 1 : 0,
+      hypothesisKind: proceduralMemory.hypothesisKind,
+      stateTransition: proceduralMemory.stateTransition,
+      recoverySequence: proceduralMemory.recoverySequence,
+      evidenceSummary: proceduralMemory.evidenceSummary
     });
   }
 }
@@ -115,19 +119,78 @@ function shortenError(error: string): string {
   return error.replace(/\s+/g, " ").slice(0, 80).trim();
 }
 
-function inferRecovery(context: RunContext, failedTask: AgentTask): string {
+function inferProceduralMemory(context: RunContext, failedTask: AgentTask): {
+  recovery: string;
+  hypothesisKind?: string;
+  stateTransition?: string;
+  recoverySequence?: string[];
+  evidenceSummary?: string;
+} {
   // Look for the inserted task that followed this one (depth+1)
   const failedIndex = context.tasks.indexOf(failedTask);
-  if (failedIndex === -1) return "unknown";
+  if (failedIndex === -1) {
+    return { recovery: "unknown" };
+  }
 
   const nextTasks = context.tasks.slice(failedIndex + 1);
-  const recoveryTask = nextTasks.find(t => t.replanDepth > 0);
+  const recoveryTasks = nextTasks.filter((task) => task.replanDepth > 0).slice(0, 4);
+  const topHypothesis = context.hypotheses
+    ?.filter((hypothesis) => hypothesis.taskId === failedTask.id)
+    .sort((left, right) => right.confidence - left.confidence)[0];
+  const relevantStateHistory = context.worldStateHistory
+    ?.filter((state) => state.lastAction === failedTask.type || state.lastObservationId)
+    .slice(-3) ?? [];
+  const stateTransition = relevantStateHistory.length >= 2
+    ? `${relevantStateHistory[0]?.appState ?? "unknown"} -> ${relevantStateHistory[relevantStateHistory.length - 1]?.appState ?? "unknown"}`
+    : relevantStateHistory[0]?.appState;
+  const recentEvidence = (context.experimentResults ?? [])
+    .filter((result) => result.taskId === failedTask.id)
+    .slice(-2)
+    .map((result) => `${result.experiment}:${result.outcome}`)
+    .join("; ");
 
-  if (!recoveryTask) return "abort";
-  if (recoveryTask.type === "visual_click") return "use visual_click";
-  if (recoveryTask.type === "wait") return `add wait ${recoveryTask.payload.durationMs ?? 1000}ms`;
-  if (recoveryTask.type === failedTask.type) return `retry ${recoveryTask.type}`;
-  return `fallback to ${recoveryTask.type}`;
+  if (recoveryTasks.length === 0) {
+    return {
+      recovery: "abort",
+      hypothesisKind: topHypothesis?.kind,
+      stateTransition,
+      evidenceSummary: recentEvidence || undefined
+    };
+  }
+
+  const recoverySequence = recoveryTasks.map((task) => summarizeRecoveryTask(task));
+  return {
+    recovery: describeRecoverySequence(recoveryTasks),
+    hypothesisKind: topHypothesis?.kind,
+    stateTransition,
+    recoverySequence,
+    evidenceSummary: recentEvidence || undefined
+  };
+}
+
+function describeRecoverySequence(tasks: AgentTask[]): string {
+  const [first] = tasks;
+  if (!first) {
+    return "abort";
+  }
+
+  if (tasks.length === 1) {
+    return summarizeRecoveryTask(first);
+  }
+
+  return tasks.map((task) => summarizeRecoveryTask(task)).join(" -> ");
+}
+
+function summarizeRecoveryTask(task: AgentTask): string {
+  if (task.type === "visual_click") return "use visual_click";
+  if (task.type === "visual_type") return "use visual_type";
+  if (task.type === "wait") return `add wait ${task.payload.durationMs ?? 1000}ms`;
+  if (task.type === "open_page") return `reopen ${String(task.payload.url ?? "page")}`;
+  if (task.type === "assert_text") return "retry assertion";
+  if (task.type === "click") return "retry click";
+  if (task.type === "type") return "retry type";
+  if (task.type === "select") return "retry select";
+  return `fallback to ${task.type}`;
 }
 
 // ── Task template extraction ──────────────────────────────────────────────────

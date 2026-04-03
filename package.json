@@ -11,6 +11,8 @@
     "sample:app": "node --import tsx src/sample-app/server.ts",
     "benchmark:planner": "node --import tsx src/planner/benchmark.ts",
     "inspect:run": "node --import tsx src/inspect-run.ts",
+    "verify:moonshot": "node --import tsx src/verify-moonshot.ts",
+    "verify:moonshot:env": "node --env-file=.env.moonshot --import tsx src/verify-moonshot.ts",
     "test": "npm run test:unit:planner && npm run test:unit:shell && npm run test:smoke",
     "test:e2e": "node --import tsx --test src/e2e.integration.test.ts",
     "test:smoke": "node --import tsx --test src/planner.provider.smoke.test.ts src/replanner.provider.smoke.test.ts src/diagnoser.provider.smoke.test.ts",

@@ -3,3 +3,8 @@ dist/
 artifacts/
 .idea/
 *.log
+.env
+.env.*
+!.env.example
+!.env.moonshot.example
+!.env.proxy.example

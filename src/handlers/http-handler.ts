@@ -59,6 +59,7 @@ export async function handleHttpTask(
   });
 
   return {
-    summary: `${method} ${url} → ${response.status} (${text.length} bytes). Preview: ${snippet}`
+    summary: `${method} ${url} → ${response.status} (${text.length} bytes). Preview: ${snippet}`,
+    stateHints: [`http_status:${response.status}`, `http_method:${method}`]
   };
 }

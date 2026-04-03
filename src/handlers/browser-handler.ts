@@ -18,6 +18,8 @@ import { restoreSession, captureSession, extractDomain, isPasswordSelector } fro
 export interface TaskExecutionOutput {
   summary: string;
   artifacts?: RunArtifact[];
+  stateHints?: string[];
+  observationHints?: string[];
 }
 
 async function captureAndPublishScreenshot(context: RunContext, taskId: string): Promise<void> {
@@ -77,7 +79,9 @@ async function executeBrowserAction(
         context.screencastSession = await startScreencast(session.page, context.runId).catch(() => undefined);
       }
       return {
-        summary: `Opened page: ${url} (${title})${restored ? " [session restored]" : ""}`
+        summary: `Opened page: ${url} (${title})${restored ? " [session restored]" : ""}`,
+        stateHints: [`opened_url:${url}`, `page_title:${title}`],
+        observationHints: restored ? ["session_restored:true"] : undefined
       };
     }
 
@@ -99,7 +103,8 @@ async function executeBrowserAction(
       }
 
       return {
-        summary: `Clicked: ${selector}`
+        summary: `Clicked: ${selector}`,
+        stateHints: [`clicked_selector:${selector}`]
       };
     }
 
@@ -124,7 +129,8 @@ async function executeBrowserAction(
       }
 
       return {
-        summary: `Typed into: ${selector}`
+        summary: `Typed into: ${selector}`,
+        stateHints: [`typed_selector:${selector}`]
       };
     }
 
@@ -135,7 +141,8 @@ async function executeBrowserAction(
       logger.info(`Selecting "${value}" in: ${selector}`);
       await selectOption(session, selector, value);
       return {
-        summary: `Selected "${value}" in: ${selector}`
+        summary: `Selected "${value}" in: ${selector}`,
+        stateHints: [`selected_value:${value}`, `selected_selector:${selector}`]
       };
     }
 
@@ -147,7 +154,8 @@ async function executeBrowserAction(
       logger.info(`Scrolling ${direction} ${amount}px${selector ? ` on: ${selector}` : ""}`);
       await scrollElement(session, selector, direction, amount);
       return {
-        summary: `Scrolled ${direction} ${amount}px`
+        summary: `Scrolled ${direction} ${amount}px`,
+        stateHints: [`scroll_direction:${direction}`, `scroll_amount:${amount}`]
       };
     }
 
@@ -157,7 +165,8 @@ async function executeBrowserAction(
       logger.info(`Hovering: ${selector}`);
       await hoverElement(session, selector);
       return {
-        summary: `Hovered: ${selector}`
+        summary: `Hovered: ${selector}`,
+        stateHints: [`hovered_selector:${selector}`]
       };
     }
 
@@ -166,7 +175,8 @@ async function executeBrowserAction(
       logger.info(`Waiting: ${durationMs}ms`);
       await waitForDuration(context.browserSession, durationMs);
       return {
-        summary: `Waited: ${durationMs}ms`
+        summary: `Waited: ${durationMs}ms`,
+        stateHints: [`waited_ms:${durationMs}`]
       };
     }
 
@@ -177,6 +187,7 @@ async function executeBrowserAction(
       await takeScreenshot(session, outputPath);
       return {
         summary: `Screenshot: ${outputPath}`,
+        stateHints: [`screenshot_path:${outputPath}`],
         artifacts: [
           {
             type: "screenshot",

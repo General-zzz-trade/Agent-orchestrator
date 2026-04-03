@@ -15,7 +15,8 @@ export async function handleShellTask(
       logger.info(`Starting app: ${command}`);
       context.appProcess = startApp(command);
       return {
-        summary: `Started app: ${command}`
+        summary: `Started app: ${command}`,
+        stateHints: [`app_started:${command}`]
       };
     }
 
@@ -25,7 +26,8 @@ export async function handleShellTask(
       logger.info(`Waiting for server: ${url} (${timeoutMs}ms timeout)`);
       await waitForServer(url, { timeoutMs });
       return {
-        summary: `Server available: ${url}`
+        summary: `Server available: ${url}`,
+        stateHints: [`server_ready:${url}`]
       };
     }
 
@@ -34,7 +36,8 @@ export async function handleShellTask(
       await stopApp(context.appProcess);
       context.appProcess = undefined;
       return {
-        summary: "Stopped app"
+        summary: "Stopped app",
+        stateHints: ["app_stopped:true"]
       };
     }
 

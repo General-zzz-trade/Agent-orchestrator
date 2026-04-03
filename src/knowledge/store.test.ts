@@ -7,6 +7,7 @@ import {
   getSelectorsForDomain,
   upsertLesson,
   getLessonsForTaskType,
+  retrieveRecoveryPriors,
   upsertTemplate,
   findTemplates,
   retrieveRelevantKnowledge,
@@ -63,6 +64,42 @@ test("getLessonsForTaskType: scoped to domain", () => {
   const lessons = getLessonsForTaskType("click", "app.example.com");
   assert.equal(lessons.length, 1);
   assert.equal(lessons[0].recovery, "scroll first");
+});
+
+test("retrieveRecoveryPriors: prefers matching hypothesis and domain", () => {
+  upsertLesson({
+    taskType: "click",
+    errorPattern: "selector moved",
+    recovery: "use visual_click",
+    domain: "app.example.com",
+    successCount: 1,
+    hypothesisKind: "selector_drift",
+    recoverySequence: ["use visual_click"]
+  });
+  upsertLesson({
+    taskType: "click",
+    errorPattern: "slow render",
+    recovery: "add wait 500ms",
+    successCount: 2
+  });
+  upsertLesson({
+    taskType: "click",
+    errorPattern: "selector moved",
+    recovery: "reopen page",
+    domain: "other.example.com",
+    successCount: 10,
+    hypothesisKind: "missing_page_context"
+  });
+
+  const priors = retrieveRecoveryPriors("click", {
+    domain: "app.example.com",
+    hypothesisKind: "selector_drift",
+    limit: 2
+  });
+
+  assert.equal(priors.length, 2);
+  assert.equal(priors[0].recovery, "use visual_click");
+  assert.equal(priors[0].hypothesisKind, "selector_drift");
 });
 
 test("upsertTemplate: insert and find by keyword", () => {

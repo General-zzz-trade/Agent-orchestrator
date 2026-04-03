@@ -17,7 +17,7 @@ export async function loadRecentRuns(limit: number): Promise<RunContext[]> {
 }
 
 export async function findRunsByTaskType(type: AgentTask["type"]): Promise<RunContext[]> {
-  return listRuns(500).then(runs => runs.filter(r => r.tasks.some(t => t.type === type)));
+  return listRuns(500).filter((run) => run.tasks.some((task) => task.type === type));
 }
 
 export async function findFailurePatterns(): Promise<FailurePattern[]> {

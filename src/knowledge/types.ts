@@ -24,6 +24,10 @@ export interface FailureLessonEntry {
   domain?: string;
   recovery: string;              // what worked: "use visual_click" | "add wait 1000" | etc.
   successCount: number;
+  hypothesisKind?: string;
+  stateTransition?: string;
+  recoverySequence?: string[];
+  evidenceSummary?: string;
 }
 
 export interface TaskTemplateEntry {

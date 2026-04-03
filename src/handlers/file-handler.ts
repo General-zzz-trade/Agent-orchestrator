@@ -33,7 +33,8 @@ export async function handleReadFileTask(
   const maxLen = Number(task.payload.maxLength ?? 2000);
   const snippet = content.slice(0, maxLen);
   return {
-    summary: `Read ${filePath} (${content.length} chars). Content: ${snippet}`
+    summary: `Read ${filePath} (${content.length} chars). Content: ${snippet}`,
+    stateHints: [`read_file:${rawPath}`]
   };
 }
 
@@ -55,6 +56,7 @@ export async function handleWriteFileTask(
   }
 
   return {
-    summary: `Wrote ${content.length} chars to ${filePath}`
+    summary: `Wrote ${content.length} chars to ${filePath}`,
+    stateHints: [`wrote_file:${rawPath}`]
   };
 }

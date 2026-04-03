@@ -19,7 +19,9 @@ export async function handleAssertTask(
   await assertTextVisible(context.browserSession, text, timeoutMs);
 
   return {
-    summary: `Asserted text: ${text}`
+    summary: `Asserted text: ${text}`,
+    stateHints: [`asserted_text:${text}`],
+    observationHints: [`expected_text:${text}`]
   };
 }
 

@@ -98,6 +98,7 @@ async function main() {
   console.log(`  GET  /api/v1/runs/:id    - run detail`);
   console.log(`  GET  /api/v1/runs/:id/status    - live status`);
   console.log(`  GET  /api/v1/runs/:id/artifacts - artifacts`);
+  console.log(`  GET  /api/v1/runs/:id/cognition - cognition trace`);
   console.log(`  GET  /api/v1/runs/:id/stream     - SSE real-time event stream`);
   console.log(`  GET  /health             - health check`);
   console.log(`  POST /api/v1/keys        - create API key`);
@@ -112,6 +113,6 @@ async function main() {
 
 // Only start server when executed directly (not imported by tests)
 import { pathToFileURL } from "node:url";
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   void main();
 }

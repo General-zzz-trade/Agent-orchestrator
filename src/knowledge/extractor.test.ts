@@ -64,16 +64,65 @@ test("extractKnowledgeFromRun: stores successful selectors from done tasks", () 
 });
 
 test("extractKnowledgeFromRun: stores failure lessons from failed tasks", () => {
+  const failedClickTask = makeTask({
+    id: "task-click-failed",
+    type: "click",
+    payload: { selector: "#missing" },
+    status: "failed",
+    errorHistory: ["element not found in the DOM after 30000ms"]
+  });
   const ctx = makeContext({
     tasks: [
       makeTask({ type: "open_page", payload: { url: "http://localhost:3000/" } }),
-      makeTask({
-        type: "click",
-        payload: { selector: "#missing" },
-        status: "failed",
-        errorHistory: ["element not found in the DOM after 30000ms"]
-      }),
+      failedClickTask,
       makeTask({ type: "visual_click", payload: { description: "element with id missing" }, status: "done", replanDepth: 1 })
+    ],
+    hypotheses: [
+      {
+        id: "hyp-1",
+        taskId: "task-click-failed",
+        kind: "selector_drift",
+        explanation: "Selector likely drifted.",
+        confidence: 0.91,
+        suggestedExperiments: ["check selector presence"],
+        recoveryHint: "Prefer visual fallback."
+      }
+    ],
+    experimentResults: [
+      {
+        id: "exp-1",
+        runId: "run-failure-lesson",
+        taskId: "task-click-failed",
+        hypothesisId: "hyp-1",
+        experiment: "check selector presence in DOM",
+        performedAction: "probe selector count in DOM",
+        outcome: "support",
+        evidence: ["selector=#missing", "count=0"],
+        confidenceDelta: 0.18,
+        stateHints: ["experiment:selector_count:0"]
+      }
+    ],
+    worldStateHistory: [
+      {
+        runId: "run-failure-lesson",
+        timestamp: new Date().toISOString(),
+        source: "task_observe",
+        reason: "failure_observation",
+        appState: "ready",
+        lastAction: "click",
+        uncertaintyScore: 0.4,
+        facts: []
+      },
+      {
+        runId: "run-failure-lesson",
+        timestamp: new Date().toISOString(),
+        source: "experiment_refresh",
+        reason: "check selector presence in DOM",
+        appState: "ready",
+        lastAction: "click",
+        uncertaintyScore: 0.25,
+        facts: []
+      }
     ],
     result: { success: false, message: "failed" }
   });
@@ -83,6 +132,9 @@ test("extractKnowledgeFromRun: stores failure lessons from failed tasks", () => 
   const lessons = getLessonsForTaskType("click");
   assert.ok(lessons.length >= 1, `Expected >= 1 lesson, got ${lessons.length}`);
   assert.ok(lessons[0].errorPattern.includes("element not found"));
+  assert.equal(lessons[0].hypothesisKind, "selector_drift");
+  assert.ok(lessons[0].stateTransition?.includes("ready"));
+  assert.ok(lessons[0].recoverySequence?.includes("use visual_click"));
 });
 
 test("extractKnowledgeFromRun: stores task template on high-quality success", () => {

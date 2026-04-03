@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { listRuns, getRun } from "../../db/runs-repo";
+import { getRun, getRunCognition, listRuns } from "../../db/runs-repo";
 import { getRunStatus } from "../run-store";
 import { submitJob, getQueue } from "../../worker/pool";
 import { sanitizeGoal } from "../sanitize";
@@ -23,6 +23,7 @@ export async function runsRoutes(app: FastifyInstance): Promise<void> {
       }
     }
   }, async (request, reply) => {
+    const tenantId = request.tenantId ?? "default";
     const { goal: rawGoal, options = {} } = request.body;
     const goal = sanitizeGoal(rawGoal);
     if (!goal) return reply.code(400).send({ error: "goal is empty after sanitization" });
@@ -30,7 +31,7 @@ export async function runsRoutes(app: FastifyInstance): Promise<void> {
     // Dangerous goal check — warn but don't block (return flag for UI to confirm)
     const danger = isDangerousGoal(goal);
     if (danger.dangerous && !request.body.options?.["confirmDangerous"]) {
-      auditLog({ tenantId: request.tenantId, action: "dangerous_goal_blocked", detail: danger.reason });
+      auditLog({ tenantId, action: "dangerous_goal_blocked", detail: danger.reason });
       return reply.code(400).send({
         error: "dangerous_goal",
         reason: danger.reason,
@@ -52,13 +53,13 @@ export async function runsRoutes(app: FastifyInstance): Promise<void> {
 
     const runId = `run-${new Date().toISOString().replace(/[:.]/g, "-")}-${Math.random().toString(36).slice(2, 8)}`;
     const decomposition = decomposeGoal(goal);
-    submitJob(runId, goal, options, request.tenantId);
-    recordFrequentGoal(request.tenantId, goal);
-    auditLog({ tenantId: request.tenantId, action: "run_submitted", resource: runId, detail: maskSensitive(goal) });
+    submitJob(runId, goal, options, tenantId);
+    recordFrequentGoal(tenantId, goal);
+    auditLog({ tenantId, action: "run_submitted", resource: runId, detail: maskSensitive(goal) });
     return reply.code(202).send({
       runId,
       status: "pending",
-      tenantId: request.tenantId,
+      tenantId,
       decomposition: decomposition.decomposed
         ? { steps: decomposition.subGoals.length, preview: summarizeDecomposition(decomposition) }
         : undefined
@@ -67,9 +68,10 @@ export async function runsRoutes(app: FastifyInstance): Promise<void> {
 
   // GET /runs — list recent runs
   app.get<{ Querystring: { limit?: string; offset?: string } }>("/runs", async (request, reply) => {
+    const tenantId = request.tenantId ?? "default";
     const limit = Math.min(Number(request.query.limit ?? 20), 100);
     const offset = Number(request.query.offset ?? 0);
-    const runs = listRuns(limit, offset, request.tenantId);
+    const runs = listRuns(limit, offset, tenantId);
     return reply.send({
       runs: runs.map(r => ({
         runId: r.runId,
@@ -88,7 +90,7 @@ export async function runsRoutes(app: FastifyInstance): Promise<void> {
 
   // GET /runs/:id — full run detail
   app.get<{ Params: { id: string } }>("/runs/:id", async (request, reply) => {
-    const run = getRun(request.params.id, request.tenantId);
+    const run = getRun(request.params.id, request.tenantId ?? "default");
     if (!run) return reply.code(404).send({ error: "Run not found" });
     return reply.send(run);
   });
@@ -97,7 +99,7 @@ export async function runsRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Params: { id: string } }>("/runs/:id/status", async (request, reply) => {
     const live = getRunStatus(request.params.id);
     if (live) return reply.send({ runId: request.params.id, status: live });
-    const run = getRun(request.params.id, request.tenantId);
+    const run = getRun(request.params.id, request.tenantId ?? "default");
     if (!run) return reply.code(404).send({ error: "Run not found" });
     return reply.send({
       runId: run.runId,
@@ -107,9 +109,16 @@ export async function runsRoutes(app: FastifyInstance): Promise<void> {
 
   // GET /runs/:id/artifacts — list artifacts
   app.get<{ Params: { id: string } }>("/runs/:id/artifacts", async (request, reply) => {
-    const run = getRun(request.params.id, request.tenantId);
+    const run = getRun(request.params.id, request.tenantId ?? "default");
     if (!run) return reply.code(404).send({ error: "Run not found" });
     return reply.send({ artifacts: run.artifacts });
+  });
+
+  // GET /runs/:id/cognition — structured cognition trace
+  app.get<{ Params: { id: string } }>("/runs/:id/cognition", async (request, reply) => {
+    const cognition = getRunCognition(request.params.id, request.tenantId ?? "default");
+    if (!cognition) return reply.code(404).send({ error: "Run not found" });
+    return reply.send(cognition);
   });
 
   // POST /runs/:id/clarify — answer a clarification question to resume planning
@@ -125,13 +134,14 @@ export async function runsRoutes(app: FastifyInstance): Promise<void> {
       }
     },
     async (request, reply) => {
+      const tenantId = request.tenantId ?? "default";
       const { id } = request.params;
       const { answer } = request.body;
       const record = answerClarification(id, answer);
       if (!record) return reply.code(404).send({ error: "Clarification request not found or already answered." });
       const enrichedGoal = `${record.originalGoal} (clarification: ${answer})`;
       deleteClarification(id);
-      submitJob(id, enrichedGoal, {}, request.tenantId);
+      submitJob(id, enrichedGoal, {}, tenantId);
       return reply.code(202).send({ runId: id, status: "accepted", enrichedGoal });
     }
   );

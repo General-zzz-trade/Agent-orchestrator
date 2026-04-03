@@ -107,6 +107,22 @@ export function getLessonsForTaskType(taskType: string, domain?: string): Failur
   return (rows as { value_json: string }[]).map(r => JSON.parse(r.value_json) as FailureLessonEntry);
 }
 
+export function retrieveRecoveryPriors(
+  taskType: string,
+  options: {
+    domain?: string;
+    hypothesisKind?: string;
+    limit?: number;
+  } = {}
+): FailureLessonEntry[] {
+  const limit = Math.max(1, options.limit ?? 5);
+  const lessons = getLessonsForTaskType(taskType, options.domain);
+
+  return [...lessons]
+    .sort((left, right) => scoreLesson(right, options) - scoreLesson(left, options))
+    .slice(0, limit);
+}
+
 // ── Task Templates ────────────────────────────────────────────────────────────
 
 export function upsertTemplate(entry: TaskTemplateEntry): void {
@@ -155,6 +171,40 @@ export function retrieveRelevantKnowledge(goal: string, domain?: string): Releva
       .concat(getLessonsForTaskType("assert_text", domain)),
     templates: findTemplates(words, domain)
   };
+}
+
+function scoreLesson(
+  lesson: FailureLessonEntry,
+  options: {
+    domain?: string;
+    hypothesisKind?: string;
+  }
+): number {
+  let score = lesson.successCount * 2;
+
+  if (options.domain && lesson.domain === options.domain) {
+    score += 3;
+  } else if (!lesson.domain) {
+    score += 1;
+  }
+
+  if (options.hypothesisKind && lesson.hypothesisKind === options.hypothesisKind) {
+    score += 4;
+  }
+
+  if (lesson.recoverySequence?.length) {
+    score += 1;
+  }
+
+  if (lesson.stateTransition) {
+    score += 0.5;
+  }
+
+  if (lesson.evidenceSummary) {
+    score += 0.25;
+  }
+
+  return score;
 }
 
 // ── Stats ─────────────────────────────────────────────────────────────────────

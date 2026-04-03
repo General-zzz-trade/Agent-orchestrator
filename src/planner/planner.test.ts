@@ -1,9 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { beforeEach } from "node:test";
 import { planTasks } from "./index";
+import { getDb } from "../db/client";
+import { initKnowledgeTable, upsertLesson } from "../knowledge/store";
 
 // Minimal runId fixture
 const RUN = "test-run";
+
+beforeEach(() => {
+  initKnowledgeTable();
+  getDb().prepare("DELETE FROM knowledge").run();
+});
 
 // ---------------------------------------------------------------------------
 // Planner selection for new action types
@@ -148,4 +156,48 @@ test("planner: select task has correct payload shape", async () => {
   assert.ok(selectTask);
   assert.equal(selectTask?.payload.value, "en");
   assert.equal(selectTask?.payload.selector, "#lang");
+});
+
+test("planner: planning prior inserts visual_click for natural click goal", async () => {
+  upsertLesson({
+    taskType: "click",
+    errorPattern: "selector moved",
+    recovery: "use visual_click",
+    domain: "example.com",
+    successCount: 2,
+    hypothesisKind: "selector_drift",
+    recoverySequence: ["use visual_click"]
+  });
+
+  const result = await planTasks(
+    'open "https://example.com" and click login',
+    { runId: RUN, mode: "auto", maxLLMPlannerCalls: 0 }
+  );
+
+  const types = result.tasks.map((task) => task.type);
+  assert.ok(types.includes("visual_click"));
+  assert.equal(result.decisionTrace.chosenPriorAwarePlanning?.applied, true);
+  assert.ok((result.decisionTrace.chosenPriorAwarePlanning?.matchedPriors.length ?? 0) > 0);
+});
+
+test("planner: planning prior inserts wait before assert_text", async () => {
+  upsertLesson({
+    taskType: "assert_text",
+    errorPattern: "dashboard delayed",
+    recovery: "add wait 1500ms",
+    successCount: 2,
+    hypothesisKind: "state_not_ready",
+    recoverySequence: ["add wait 1500ms", "retry assertion"]
+  });
+
+  const result = await planTasks(
+    'open "https://example.com" and assert text "Dashboard"',
+    { runId: RUN, mode: "auto", maxLLMPlannerCalls: 0 }
+  );
+
+  const waitIndex = result.tasks.findIndex((task) => task.type === "wait");
+  const assertIndex = result.tasks.findIndex((task) => task.type === "assert_text");
+  assert.ok(waitIndex >= 0);
+  assert.ok(assertIndex > waitIndex);
+  assert.equal(result.decisionTrace.chosenPriorAwarePlanning?.applied, true);
 });

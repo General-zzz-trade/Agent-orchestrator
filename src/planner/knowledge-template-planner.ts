@@ -21,7 +21,7 @@ export function planFromKnowledge(goal: string): KnowledgeTemplatePlanResult {
     return { matched: false, blueprints: [], confidence: 0 };
   }
 
-  const domain = goal.match(/https?:\/\/([^/\s]+)/i)?.[1];
+  const domain = goal.match(/https?:\/\/([^/"\s]+)/i)?.[1];
   const templates = findTemplates(keywords, domain);
 
   if (templates.length === 0) {
