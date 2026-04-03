@@ -18,7 +18,7 @@ export interface SubGoal {
 export interface DecompositionResult {
   decomposed: boolean;
   subGoals: SubGoal[];
-  strategy: "sequential" | "single";
+  strategy: "sequential" | "single" | "causal";
 }
 
 // Sentence-level separators indicating sequential steps
