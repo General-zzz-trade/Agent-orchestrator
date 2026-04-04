@@ -1,14 +1,16 @@
 import type { AgentTask, RunContext } from "../types";
-import type { FailureHypothesis } from "./types";
+import type { FailureHypothesis, BetaBelief } from "./types";
 import { getLessonsForTaskType } from "../knowledge/store";
 import { runReflection, getAdjustedPrior } from "../learning/reflection-loop";
 import type { ReflectionInsight } from "../learning/reflection-loop";
+import { callOpenAICompatible, callAnthropic, readProviderConfig, safeJsonParse } from "../llm/provider";
+import type { LLMProviderConfig } from "../llm/provider";
 
-export function generateFailureHypotheses(input: {
+export async function generateFailureHypotheses(input: {
   context: RunContext;
   task: AgentTask;
   failureReason: string;
-}): FailureHypothesis[] {
+}): Promise<FailureHypothesis[]> {
   const { context, task, failureReason } = input;
   const visibleText = context.latestObservation?.visibleText?.join(" ") ?? "";
   const appState = context.worldState?.appState ?? "unknown";
@@ -87,6 +89,15 @@ export function generateFailureHypotheses(input: {
     // Knowledge store may not be initialized — skip silently
   }
 
+  // LLM-driven hypothesis generation: ALWAYS try when LLM is configured.
+  // LLM hypotheses complement predefined ones — they may discover novel failure modes.
+  try {
+    const llmHypotheses = await generateLLMHypotheses(context, task, failureReason);
+    hypotheses.push(...llmHypotheses);
+  } catch {
+    // LLM hypothesis generation is best-effort; fall through to predefined hypotheses
+  }
+
   if (hypotheses.length === 0) {
     hypotheses.push(createHypothesis(task.id, "unknown", adjustConfidence("unknown", 0.4, reflectionInsight),
       "The failure does not strongly match a known recovery pattern yet.",
@@ -107,13 +118,32 @@ function adjustConfidence(
   return getAdjustedPrior(kind, base, insight);
 }
 
+function defaultBeliefForKind(kind: FailureHypothesis["kind"], confidence?: number): BetaBelief {
+  if (kind === "learned_pattern") {
+    // For learned patterns, derive alpha from success count approximation
+    // The confidence passed in is min(0.85, 0.5 + successCount * 0.05)
+    // so successCount ≈ (confidence - 0.5) / 0.05, but we use a simpler heuristic:
+    const approxSuccessCount = confidence != null ? Math.max(0, Math.round((confidence - 0.5) / 0.05)) : 0;
+    return { alpha: 1 + approxSuccessCount, beta: 1 };
+  }
+  if (kind === "unknown") {
+    return { alpha: 1, beta: 1 };
+  }
+  if (kind === "discovered") {
+    return { alpha: 1, beta: 1 };
+  }
+  // Predefined hypotheses
+  return { alpha: 2, beta: 1 };
+}
+
 function createHypothesis(
   taskId: string | undefined,
   kind: FailureHypothesis["kind"],
   confidence: number,
   explanation: string,
   suggestedExperiments: string[],
-  recoveryHint: string
+  recoveryHint: string,
+  belief?: BetaBelief
 ): FailureHypothesis {
   return {
     id: `hyp-${taskId ?? "run"}-${kind}-${Math.random().toString(36).slice(2, 7)}`,
@@ -121,6 +151,7 @@ function createHypothesis(
     kind,
     explanation,
     confidence,
+    belief: belief ?? defaultBeliefForKind(kind, confidence),
     suggestedExperiments,
     recoveryHint
   };
@@ -139,4 +170,79 @@ function extractDomainFromContext(context: RunContext): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Generates novel failure hypotheses using an LLM when predefined patterns
+ * have low confidence. Reads config from LLM_HYPOTHESIS_* env vars.
+ * Returns an empty array if no LLM is configured or the call fails.
+ */
+async function generateLLMHypotheses(
+  context: RunContext,
+  task: AgentTask,
+  failureReason: string
+): Promise<FailureHypothesis[]> {
+  const config = readProviderConfig("LLM_HYPOTHESIS", {
+    maxTokens: 512,
+    temperature: 0.4
+  });
+
+  // If no provider configured, skip silently
+  if (!config.provider) {
+    return [];
+  }
+
+  const systemPrompt = `You are a failure diagnosis engine for a UI automation agent.
+Given a failed task and its context, generate 1-3 novel hypotheses about why the failure occurred.
+Each hypothesis should be distinct from common patterns (selector drift, state not ready, session issues).
+Respond with JSON: { "hypotheses": [{ "name": string, "explanation": string, "experiment": string, "recovery": string }] }`;
+
+  const userPrompt = `Task type: ${task.type}
+Task payload: ${JSON.stringify(task.payload)}
+Failure reason: ${failureReason}
+Page URL: ${context.worldState?.pageUrl ?? "unknown"}
+App state: ${context.worldState?.appState ?? "unknown"}
+Visible text: ${(context.latestObservation?.visibleText ?? []).slice(0, 5).join(", ")}
+Error history: ${(task.errorHistory ?? []).slice(-3).join("; ")}`;
+
+  const messages = [
+    { role: "system" as const, content: systemPrompt },
+    { role: "user" as const, content: userPrompt }
+  ];
+
+  const callLLM = config.provider === "anthropic" ? callAnthropic : callOpenAICompatible;
+  const result = await callLLM(config, messages, "HypothesisEngine", {
+    maxRetries: 1,
+    baseDelayMs: 500,
+    maxDelayMs: 2000,
+    jitterFactor: 0.2
+  });
+
+  const parsed = safeJsonParse(result.content) as {
+    hypotheses?: Array<{
+      name?: string;
+      explanation?: string;
+      experiment?: string;
+      recovery?: string;
+    }>;
+  } | undefined;
+
+  if (!parsed?.hypotheses || !Array.isArray(parsed.hypotheses)) {
+    return [];
+  }
+
+  return parsed.hypotheses
+    .filter((h) => h.name && h.explanation)
+    .slice(0, 3)
+    .map((h) =>
+      createHypothesis(
+        task.id,
+        "discovered",
+        0.5,
+        `[LLM] ${h.name}: ${h.explanation}`,
+        h.experiment ? [h.experiment] : ["investigate further"],
+        h.recovery ?? "Apply LLM-suggested recovery strategy.",
+        { alpha: 1, beta: 1 }
+      )
+    );
 }

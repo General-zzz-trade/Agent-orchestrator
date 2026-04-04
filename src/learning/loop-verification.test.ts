@@ -5,7 +5,7 @@ import { applyInsights } from "./strategy-updater";
 import { upsertLesson, getLessonsForTaskType } from "../knowledge/store";
 import { generateFailureHypotheses } from "../cognition/hypothesis-engine";
 
-test("full learning loop: lesson → reflection → strategy → hypothesis", () => {
+test("full learning loop: lesson → reflection → strategy → hypothesis", async () => {
   // Step 1: Create failure lessons (simulating past run failures)
   upsertLesson({
     taskType: "click",
@@ -34,7 +34,7 @@ test("full learning loop: lesson → reflection → strategy → hypothesis", ()
   assert.ok(typeof applied === "number");
 
   // Step 4: Generate hypotheses — should use adjusted priors, not hardcoded
-  const hypotheses = generateFailureHypotheses({
+  const hypotheses = await generateFailureHypotheses({
     context: {
       latestObservation: { visibleText: ["Dashboard"] },
       worldState: { appState: "ready" }
@@ -94,7 +94,7 @@ test("cross-domain lessons are available for new domains", () => {
   // At minimum, should not crash
 });
 
-test("hypothesis engine uses learned_pattern from knowledge store", () => {
+test("hypothesis engine uses learned_pattern from knowledge store", async () => {
   // Create a lesson that the hypothesis engine should pick up
   upsertLesson({
     taskType: "assert_text",
@@ -105,7 +105,7 @@ test("hypothesis engine uses learned_pattern from knowledge store", () => {
     domain: ""
   });
 
-  const hypotheses = generateFailureHypotheses({
+  const hypotheses = await generateFailureHypotheses({
     context: {
       latestObservation: { visibleText: ["Some content"] },
       worldState: {}

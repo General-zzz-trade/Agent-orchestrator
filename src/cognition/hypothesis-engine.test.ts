@@ -79,7 +79,7 @@ test("hypothesis recovery pipeline ranks selector drift higher when selector is 
     startedAt: new Date().toISOString()
   };
 
-  const hypotheses = generateFailureHypotheses({
+  const hypotheses = await generateFailureHypotheses({
     context,
     task,
     failureReason: "selector not found"
@@ -164,7 +164,7 @@ test("state readiness experiment returns observation patch after a low-risk prob
     startedAt: new Date().toISOString()
   };
 
-  const hypotheses = generateFailureHypotheses({
+  const hypotheses = await generateFailureHypotheses({
     context,
     task,
     failureReason: "timed out waiting for dashboard"
@@ -182,7 +182,7 @@ test("state readiness experiment returns observation patch after a low-risk prob
   assert.ok(experimentResults[0]?.stateHints?.includes("experiment:readiness_probe"));
 });
 
-test("generates hypotheses and maintains confidence sort order", () => {
+test("generates hypotheses and maintains confidence sort order", async () => {
   const task: AgentTask = {
     id: "task-learn-1",
     type: "click",
@@ -234,7 +234,7 @@ test("generates hypotheses and maintains confidence sort order", () => {
     startedAt: new Date().toISOString()
   };
 
-  const hypotheses = generateFailureHypotheses({
+  const hypotheses = await generateFailureHypotheses({
     context,
     task,
     failureReason: "selector not found"
@@ -247,7 +247,7 @@ test("generates hypotheses and maintains confidence sort order", () => {
   }
 });
 
-test("hypothesis confidence uses learned priors when available", () => {
+test("hypothesis confidence uses learned priors when available", async () => {
   const task: AgentTask = {
     id: "t1",
     type: "click",
@@ -296,7 +296,7 @@ test("hypothesis confidence uses learned priors when available", () => {
     startedAt: new Date().toISOString()
   };
 
-  const hypotheses = generateFailureHypotheses({
+  const hypotheses = await generateFailureHypotheses({
     context,
     task,
     failureReason: "selector not found"
@@ -309,7 +309,7 @@ test("hypothesis confidence uses learned priors when available", () => {
   assert.ok(selectorHyp!.confidence <= 1);
 });
 
-test("generates session_not_established hypothesis when login text is visible", () => {
+test("generates session_not_established hypothesis when login text is visible", async () => {
   const task: AgentTask = {
     id: "task-session-1",
     type: "click",
@@ -356,11 +356,181 @@ test("generates session_not_established hypothesis when login text is visible", 
     startedAt: new Date().toISOString()
   };
 
-  const hypotheses = generateFailureHypotheses({
+  const hypotheses = await generateFailureHypotheses({
     context,
     task,
     failureReason: "element not visible"
   });
 
   assert.ok(hypotheses.some((h) => h.kind === "session_not_established"));
+});
+
+// ── Leap 1/2: belief field and LLM fallback tests ──────────────────────────
+
+test("predefined hypotheses include belief field with correct alpha/beta", async () => {
+  const task: AgentTask = {
+    id: "task-belief-1",
+    type: "click",
+    status: "failed",
+    retries: 0,
+    attempts: 1,
+    replanDepth: 0,
+    payload: { selector: "#btn" },
+    errorHistory: ["selector not found"]
+  };
+
+  const context: RunContext = {
+    runId: "run-belief-test",
+    goal: 'click "#btn"',
+    tasks: [task],
+    artifacts: [],
+    replanCount: 0,
+    nextTaskSequence: 1,
+    insertedTaskCount: 0,
+    llmReplannerInvocations: 0,
+    llmReplannerTimeoutCount: 0,
+    llmReplannerFallbackCount: 0,
+    escalationDecisions: [],
+    observations: [],
+    latestObservation: {
+      id: "obs-1",
+      runId: "run-belief-test",
+      taskId: "task-belief-1",
+      timestamp: new Date().toISOString(),
+      source: "task_observe",
+      pageUrl: "http://localhost:3000",
+      visibleText: [],
+      actionableElements: [],
+      appStateGuess: "ready",
+      anomalies: [],
+      confidence: 0.8
+    },
+    worldState: {
+      runId: "run-belief-test",
+      timestamp: new Date().toISOString(),
+      appState: "ready",
+      uncertaintyScore: 0.3,
+      facts: []
+    },
+    limits: { maxReplansPerRun: 3, maxReplansPerTask: 1 },
+    startedAt: new Date().toISOString()
+  };
+
+  const hypotheses = await generateFailureHypotheses({
+    context,
+    task,
+    failureReason: "selector not found"
+  });
+
+  for (const h of hypotheses) {
+    assert.ok(h.belief, `Hypothesis ${h.kind} should have a belief field`);
+    assert.ok(typeof h.belief.alpha === "number", `belief.alpha should be a number`);
+    assert.ok(typeof h.belief.beta === "number", `belief.beta should be a number`);
+    assert.ok(h.belief.alpha > 0, `belief.alpha should be positive`);
+    assert.ok(h.belief.beta > 0, `belief.beta should be positive`);
+  }
+
+  // Predefined hypotheses (selector_drift) should have alpha=2, beta=1
+  const selectorH = hypotheses.find((h) => h.kind === "selector_drift");
+  assert.ok(selectorH);
+  assert.equal(selectorH!.belief.alpha, 2);
+  assert.equal(selectorH!.belief.beta, 1);
+});
+
+test("unknown fallback hypothesis has belief alpha=1, beta=1", async () => {
+  // Create a context that won't match any predefined pattern
+  const task: AgentTask = {
+    id: "task-unknown-1",
+    type: "run_code",
+    status: "failed",
+    retries: 0,
+    attempts: 1,
+    replanDepth: 0,
+    payload: { code: "doSomething()" }
+  };
+
+  const context: RunContext = {
+    runId: "run-unknown-test",
+    goal: "run some code",
+    tasks: [task],
+    artifacts: [],
+    replanCount: 0,
+    nextTaskSequence: 1,
+    insertedTaskCount: 0,
+    llmReplannerInvocations: 0,
+    llmReplannerTimeoutCount: 0,
+    llmReplannerFallbackCount: 0,
+    escalationDecisions: [],
+    observations: [],
+    worldState: {
+      runId: "run-unknown-test",
+      timestamp: new Date().toISOString(),
+      appState: "unknown",
+      uncertaintyScore: 0.5,
+      facts: []
+    },
+    limits: { maxReplansPerRun: 3, maxReplansPerTask: 1 },
+    startedAt: new Date().toISOString()
+  };
+
+  const hypotheses = await generateFailureHypotheses({
+    context,
+    task,
+    failureReason: "unexpected runtime error xyz123"
+  });
+
+  // Should fall back to unknown when no patterns match and no LLM configured
+  const unknownH = hypotheses.find((h) => h.kind === "unknown");
+  assert.ok(unknownH, "Should have an unknown hypothesis fallback");
+  assert.equal(unknownH!.belief.alpha, 1);
+  assert.equal(unknownH!.belief.beta, 1);
+});
+
+test("when all hypotheses have low confidence and no LLM configured, unknown fallback still works", async () => {
+  const task: AgentTask = {
+    id: "task-lowconf-1",
+    type: "run_code",
+    status: "failed",
+    retries: 0,
+    attempts: 1,
+    replanDepth: 0,
+    payload: { code: "fail()" }
+  };
+
+  const context: RunContext = {
+    runId: "run-lowconf-test",
+    goal: "run failing code",
+    tasks: [task],
+    artifacts: [],
+    replanCount: 0,
+    nextTaskSequence: 1,
+    insertedTaskCount: 0,
+    llmReplannerInvocations: 0,
+    llmReplannerTimeoutCount: 0,
+    llmReplannerFallbackCount: 0,
+    escalationDecisions: [],
+    observations: [],
+    worldState: {
+      runId: "run-lowconf-test",
+      timestamp: new Date().toISOString(),
+      appState: "unknown",
+      uncertaintyScore: 0.9,
+      facts: []
+    },
+    limits: { maxReplansPerRun: 3, maxReplansPerTask: 1 },
+    startedAt: new Date().toISOString()
+  };
+
+  // No LLM_HYPOTHESIS_PROVIDER set, so LLM fallback should be skipped gracefully
+  const hypotheses = await generateFailureHypotheses({
+    context,
+    task,
+    failureReason: "some totally novel error"
+  });
+
+  assert.ok(hypotheses.length > 0, "Should have at least one hypothesis");
+  // Every hypothesis should have a belief field
+  for (const h of hypotheses) {
+    assert.ok(h.belief, `Hypothesis ${h.kind} should have belief`);
+  }
 });

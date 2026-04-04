@@ -115,7 +115,7 @@ export async function visuallyLocateElement(
     const body = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
     const content = body.choices?.[0]?.message?.content ?? "{}";
     const parsed = JSON.parse(content) as VisualLocateResult;
-    return { visible: true, confidence: "medium", description: "element found", ...parsed };
+    return { ...{ visible: true, confidence: "medium" as const, description: "element found" }, ...parsed };
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
       return { confidence: "low", description: `Vision LLM timed out after ${config.timeoutMs}ms`, visible: false };

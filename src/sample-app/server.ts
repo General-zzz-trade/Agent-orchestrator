@@ -7,6 +7,11 @@ let loggedIn = false;
 let registered = false;
 let searchQuery = "";
 
+// Chaos endpoint state
+let chaosSessionLoads = 0;
+let chaosSessionLoggedIn = false;
+let chaosErrorVisits = 0;
+
 function route(req: IncomingMessage, res: ServerResponse): void {
   const url = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
   const path = url.pathname;
@@ -71,10 +76,59 @@ function route(req: IncomingMessage, res: ServerResponse): void {
         }),
       );
       break;
+    // ── Chaos / adversarial endpoints ─────────────────────────────────
+    case "/chaos/selector-drift":
+      res.end(chaosSelectorDriftPage());
+      break;
+    case "/chaos/session-login":
+      chaosSessionLoggedIn = true;
+      chaosSessionLoads = 0;
+      res.writeHead(302, { Location: "/chaos/session-expire" });
+      res.end();
+      break;
+    case "/chaos/session-expire":
+      if (!chaosSessionLoggedIn) {
+        res.end(chaosSessionLoginPage());
+      } else {
+        chaosSessionLoads++;
+        if (chaosSessionLoads > 3) {
+          chaosSessionLoggedIn = false;
+          chaosSessionLoads = 0;
+          res.writeHead(302, { Location: "/chaos/session-expire" });
+          res.end();
+        } else {
+          res.end(chaosSessionDashboardPage());
+        }
+      }
+      break;
+    case "/chaos/slow-render":
+      res.end(chaosSlowRenderPage());
+      break;
+    case "/chaos/multi-step-form": {
+      const step = url.searchParams.get("step") ?? "1";
+      res.end(chaosMultiStepPage(step));
+      break;
+    }
+    case "/chaos/error-recovery":
+      chaosErrorVisits++;
+      if (chaosErrorVisits % 2 === 1) {
+        res.statusCode = 500;
+        res.end(chaosErrorPage());
+      } else {
+        res.end(chaosRecoveredPage());
+      }
+      break;
+    case "/chaos/dynamic-nav":
+      res.end(chaosDynamicNavPage());
+      break;
+
     case "/reset":
       loggedIn = false;
       registered = false;
       searchQuery = "";
+      chaosSessionLoads = 0;
+      chaosSessionLoggedIn = false;
+      chaosErrorVisits = 0;
       res.end("reset");
       break;
     default:
@@ -367,6 +421,136 @@ function errorPage(path: string): string {
     <a href="/" id="back-home" class="btn">Back to Home</a>
   `,
   );
+}
+
+// ── Chaos page functions ─────────────────────────────────────────────
+
+function chaosSelectorDriftPage(): string {
+  const rand = () => Math.random().toString(36).slice(2, 6);
+  return layout("Selector Drift", `
+    <h1>Selector Drift Challenge</h1>
+    <p>Click the action button below.</p>
+    <button id="btn-${rand()}" class="btn-${rand()}" data-testid="action-button" class="btn btn-primary">
+      Perform Action
+    </button>
+    <div id="drift-result" data-testid="drift-result"></div>
+    <script>
+      document.querySelector('[data-testid="action-button"]').addEventListener('click', function() {
+        document.querySelector('[data-testid="drift-result"]').textContent = 'Action Completed Successfully';
+      });
+    </script>
+  `);
+}
+
+function chaosSessionLoginPage(): string {
+  return layout("Session Login", `
+    <h1>Session Login Required</h1>
+    <p>Please log in to access the session dashboard.</p>
+    <form method="GET" action="/chaos/session-login">
+      <div class="form-group">
+        <label for="session-user">Username</label>
+        <input type="text" id="session-user" name="user" required />
+      </div>
+      <button type="submit" id="session-login-btn" class="btn btn-primary">Log In</button>
+    </form>
+  `);
+}
+
+function chaosSessionDashboardPage(): string {
+  return layout("Session Dashboard", `
+    <h1>Authenticated Dashboard</h1>
+    <div class="alert alert-success">You are logged in. Session active.</div>
+    <p>Load count: ${chaosSessionLoads}</p>
+    <a href="/chaos/session-expire" id="session-refresh" class="btn">Refresh Page</a>
+  `);
+}
+
+function chaosSlowRenderPage(): string {
+  return layout("Slow Render", `
+    <h1>Slow Render Challenge</h1>
+    <div id="slow-content" data-testid="slow-content"></div>
+    <script>
+      setTimeout(function() {
+        document.getElementById('slow-content').textContent = 'Slowly Rendered Content';
+      }, 3000);
+    </script>
+  `);
+}
+
+function chaosMultiStepPage(step: string): string {
+  switch (step) {
+    case "1":
+      return layout("Wizard Step 1", `
+        <h1>Registration Wizard - Step 1 of 3</h1>
+        <form method="GET" action="/chaos/multi-step-form">
+          <input type="hidden" name="step" value="2" />
+          <div class="form-group">
+            <label for="wizard-name">Full Name</label>
+            <input type="text" id="wizard-name" name="name" required />
+          </div>
+          <div class="form-group">
+            <label for="wizard-email">Email</label>
+            <input type="email" id="wizard-email" name="email" required />
+          </div>
+          <button type="submit" id="wizard-next-1" class="btn btn-primary">Next</button>
+        </form>
+      `);
+    case "2":
+      return layout("Wizard Step 2", `
+        <h1>Registration Wizard - Step 2 of 3</h1>
+        <form method="GET" action="/chaos/multi-step-form">
+          <input type="hidden" name="step" value="3" />
+          <div class="form-group">
+            <label for="wizard-pref">Preference</label>
+            <select id="wizard-pref" name="pref">
+              <option value="email">Email notifications</option>
+              <option value="sms">SMS notifications</option>
+              <option value="none">No notifications</option>
+            </select>
+          </div>
+          <button type="submit" id="wizard-next-2" class="btn btn-primary">Next</button>
+        </form>
+      `);
+    case "3":
+      return layout("Wizard Step 3", `
+        <h1>Registration Wizard - Step 3 of 3</h1>
+        <div class="alert alert-success" id="wizard-complete">Registration Complete</div>
+        <p>Thank you for completing the registration wizard.</p>
+        <a href="/" id="wizard-home" class="btn">Back to Home</a>
+      `);
+    default:
+      return layout("Wizard", `<h1>Unknown step</h1>`);
+  }
+}
+
+function chaosErrorPage(): string {
+  return `<!doctype html><html><body>
+    <h1>500 Internal Server Error</h1>
+    <p id="error-detail">Something went wrong. Please try again.</p>
+    <a href="/chaos/error-recovery" id="retry-link" class="btn">Retry</a>
+  </body></html>`;
+}
+
+function chaosRecoveredPage(): string {
+  return layout("Recovered", `
+    <h1>Recovered Successfully</h1>
+    <div class="alert alert-success" id="recovery-message">The service has recovered from the error.</div>
+  `);
+}
+
+function chaosDynamicNavPage(): string {
+  const dashLabels = ["Go to Dashboard", "View Dashboard", "Dashboard \u2192", "Open Dashboard", "Dashboard Home"];
+  const searchLabels = ["Search Now", "Find Something", "Go Search", "Search \u2192"];
+  const pick = (arr: string[]) => arr[Math.floor(Math.random() * arr.length)];
+  return layout("Dynamic Nav", `
+    <h1>Dynamic Navigation Challenge</h1>
+    <p>Navigation links below change text on every load, but destinations stay the same.</p>
+    <ul>
+      <li><a href="/dashboard" id="dyn-dashboard" data-testid="nav-dashboard">${pick(dashLabels)}</a></li>
+      <li><a href="/search" id="dyn-search" data-testid="nav-search">${pick(searchLabels)}</a></li>
+      <li><a href="/" id="dyn-home" data-testid="nav-home">Home</a></li>
+    </ul>
+  `);
 }
 
 function escapeHtml(str: string): string {

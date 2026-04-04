@@ -6,6 +6,8 @@
 import type { RunContext } from "../types";
 import type { CausalGraph } from "./causal-graph";
 import { addStateNode, addCausalEdge } from "./causal-graph";
+import { encodeObservation, assignCluster } from "./state-encoder";
+import type { AgentObservation } from "../cognition/types";
 
 /**
  * Extract causal transitions from a completed run.
@@ -105,6 +107,29 @@ function deriveState(
   else if (/error|failed/i.test(text)) parts.push("content:error");
 
   return parts.length > 0 ? parts.join("|") : `${phase}:empty`;
+}
+
+/**
+ * Derive state with embedding: combines the string state representation
+ * with a vector embedding and cluster assignment.
+ */
+export function deriveStateWithEmbedding(
+  observation: AgentObservation | undefined,
+  taskType: string,
+  phase: "pre" | "post",
+  domain: string = ""
+): { stateString: string; embedding: number[]; clusterId: string } {
+  const stateString = deriveState(observation, taskType, phase);
+
+  if (!observation) {
+    const zeroEmbedding = new Array(128).fill(0);
+    return { stateString, embedding: zeroEmbedding, clusterId: "" };
+  }
+
+  const embedding = encodeObservation(observation);
+  const cluster = assignCluster(embedding, stateString, domain);
+
+  return { stateString, embedding, clusterId: cluster.id };
 }
 
 function extractDomain(context: RunContext): string {

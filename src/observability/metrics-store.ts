@@ -60,3 +60,4 @@ registerGauge("agent_queue_concurrency", "Queue concurrency limit");
 registerCounter("agent_llm_input_tokens_total", "Total LLM input tokens consumed");
 registerCounter("agent_llm_output_tokens_total", "Total LLM output tokens consumed");
 registerCounter("agent_llm_latency_ms_total", "Total LLM call latency in milliseconds");
+registerCounter("agent_llm_retries_total", "Total LLM retry attempts");

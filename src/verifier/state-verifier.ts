@@ -36,6 +36,40 @@ export async function verifyStateResult(
         ? "Observed page URL is consistent with world state."
         : "Observed page URL diverges from world state — possible navigation inconsistency.";
     }
+  } else if (task.type === "type" || task.type === "visual_type") {
+    passed = !task.error;
+    rationale = passed
+      ? "World state reflects typing activity."
+      : `Typing failed: ${task.error}`;
+    const typedValue = String(task.payload.value ?? "");
+    if (typedValue) evidence.push(`typedValue=${typedValue}`);
+  } else if (task.type === "http_request") {
+    passed = !task.error;
+    const httpArtifact = context.artifacts.find(
+      (a) => a.type === "http_response" && a.taskId === task.id
+    );
+    rationale = passed
+      ? httpArtifact
+        ? "HTTP request completed and response artifact exists."
+        : "HTTP request completed without error."
+      : `HTTP request failed: ${task.error}`;
+    if (httpArtifact) evidence.push(`artifact=${httpArtifact.description}`);
+  } else if (task.type === "run_code") {
+    passed = !task.error;
+    const codeArtifact = context.artifacts.find(
+      (a) => a.type === "code_output" && a.taskId === task.id
+    );
+    rationale = passed
+      ? codeArtifact
+        ? "Code execution completed and produced output artifact."
+        : "Code execution completed (no output captured)."
+      : `Code execution failed: ${task.error}`;
+    if (codeArtifact) evidence.push(`artifact=${codeArtifact.description}`);
+  } else if (task.type === "scroll") {
+    passed = !task.error;
+    rationale = passed
+      ? "Scroll action completed."
+      : `Scroll failed: ${task.error}`;
   }
 
   evidence.push(`appStateGuess=${observation.appStateGuess ?? "unknown"}`);

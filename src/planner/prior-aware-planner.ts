@@ -55,7 +55,7 @@ export function applyPlanningPriors(goal: string, blueprints: TaskBlueprint[]): 
       next.splice(index, 0, { type: "wait", payload: { ms: assertWaitMs, durationMs: assertWaitMs } });
       index += 1;
       notes.push(`planning prior inserted wait ${assertWaitMs}ms before assert_text`);
-      matchedPriors.push(...toPriorHits(assertPrior.taskType, assertPrior.lessons));
+      matchedPriors.push(...toPriorHits(assertPrior!.taskType, assertPrior!.lessons));
     }
   }
 

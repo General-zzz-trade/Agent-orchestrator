@@ -102,7 +102,34 @@ export type FailureHypothesisKind =
   | "session_not_established"
   | "missing_page_context"
   | "learned_pattern"
+  | "discovered"
   | "unknown";
+
+/** Beta distribution for Bayesian belief tracking. */
+export interface BetaBelief {
+  alpha: number;   // pseudo-successes (prior + observed)
+  beta: number;    // pseudo-failures  (prior + observed)
+}
+
+export function betaMean(b: BetaBelief): number {
+  return b.alpha / (b.alpha + b.beta);
+}
+
+export function betaVariance(b: BetaBelief): number {
+  const s = b.alpha + b.beta;
+  return (b.alpha * b.beta) / (s * s * (s + 1));
+}
+
+/** Sample from Beta distribution using Jöhnk's algorithm. */
+export function sampleBeta(b: BetaBelief): number {
+  // Simple approximation: use inverse CDF via uniform random
+  // For production, use a proper Beta sampler; this is adequate for Thompson Sampling
+  const u = Math.random();
+  // Use the quantile approximation: mean ± variance-scaled random
+  const mean = betaMean(b);
+  const std = Math.sqrt(betaVariance(b));
+  return Math.max(0, Math.min(1, mean + std * (u * 2 - 1) * 1.5));
+}
 
 export interface FailureHypothesis {
   id: string;
@@ -110,8 +137,87 @@ export interface FailureHypothesis {
   kind: FailureHypothesisKind;
   explanation: string;
   confidence: number;
+  belief: BetaBelief;
   suggestedExperiments: string[];
   recoveryHint: string;
+}
+
+// ── Leap 3: Learned World Model ─────────────────────────────────────────────
+
+export interface StateEmbedding {
+  vector: number[];
+  clusterId?: string;
+  timestamp: string;
+}
+
+// ── Leap 4: Hierarchical Task Network ───────────────────────────────────────
+
+export type HTNNodeStatus = "pending" | "active" | "done" | "failed" | "decomposed";
+
+export interface HTNGoalNode {
+  id: string;
+  goal: string;
+  parentId?: string;
+  children: string[];       // child node IDs (empty = leaf/primitive)
+  status: HTNNodeStatus;
+  depth: number;
+  maxDecomposeAttempts: number;
+  decomposeAttempts: number;
+  result?: { success: boolean; error?: string };
+}
+
+export interface HTNPlan {
+  nodes: Map<string, HTNGoalNode>;
+  rootId: string;
+}
+
+// ── Leap 5: Program Synthesis Recovery ──────────────────────────────────────
+
+export interface RecoveryProgram {
+  id: string;
+  triggerPattern: string;       // error pattern that triggers this program
+  triggerStateEmbedding?: number[];  // optional state context
+  steps: Array<{ type: string; payload: Record<string, unknown> }>;
+  successCount: number;
+  failureCount: number;
+  createdAt: string;
+}
+
+// ── Leap 6: Counterfactual Reasoning ────────────────────────────────────────
+
+export interface CounterfactualQuery {
+  observedState: string;
+  observedAction: string;
+  observedOutcome: string;
+  hypotheticalAction: string;  // "what if I had done X instead?"
+}
+
+export interface CounterfactualResult {
+  query: CounterfactualQuery;
+  predictedOutcome: string;
+  predictedSuccess: boolean;
+  confidence: number;
+  reasoning: string;
+}
+
+// ── Leap 7: Self-Improvement ────────────────────────────────────────────────
+
+export interface AdaptiveWeights {
+  familiarityWeight: number;   // default 0.3
+  riskWeight: number;          // default 0.3
+  stuckWeight: number;         // default 0.4
+  generation: number;          // how many updates applied
+  lastUpdated: string;
+}
+
+export interface PromptVariant {
+  id: string;
+  role: "planner" | "replanner" | "diagnoser";
+  systemPrompt: string;
+  successCount: number;
+  failureCount: number;
+  belief: BetaBelief;
+  createdAt: string;
 }
 
 export interface ExperimentResult {

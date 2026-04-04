@@ -8,3 +8,4 @@ artifacts/
 !.env.example
 !.env.moonshot.example
 !.env.proxy.example
+.env.eval

@@ -11,6 +11,7 @@ import {
   unwrapTasksPayload
 } from "./provider";
 import { buildKnowledgeContext, buildPlanningPriors, extractDomainFromGoal } from "../knowledge/planner-context";
+import { selectPrompt, recordPromptOutcome } from "../learning/prompt-evolver";
 
 export type LLMPlannerConfig = LLMProviderConfig;
 
@@ -18,6 +19,8 @@ export interface LLMPlannerInput {
   goal: string;
   recentRunsSummary: RecentRunSummary[];
   failurePatterns: FailurePattern[];
+  /** Injected context from past episodes and knowledge for prompt enrichment */
+  episodeContext?: string;
 }
 
 export interface LLMPlanner {
@@ -130,33 +133,58 @@ function createOpenAICompatiblePlanner(config: LLMPlannerConfig): LLMPlanner {
       const knowledgeContext = buildKnowledgeContext(input.goal, domain);
       const planningPriors = buildPlanningPriors(input.goal, domain);
 
-      const { content: raw } = await callOpenAICompatible(
-        config,
-        [
-          { role: "system", content: PLANNER_SYSTEM_PROMPT },
-          {
-            role: "user",
-            content: JSON.stringify({
-              goal: input.goal,
-              knowledgeContext,
-              planningPriors,
-              recentRunsSummary: input.recentRunsSummary,
-              failurePatterns: input.failurePatterns
-            })
-          }
-        ],
-        "LLM planner"
-      );
+      let selectedPrompt: { id: string; systemPrompt: string } | undefined;
+      if (!process.env.DISABLE_PROMPT_EVOLUTION) try {
+        selectedPrompt = selectPrompt("planner") ?? undefined;
+      } catch { /* fall back to default */ }
+      const systemPrompt = selectedPrompt?.systemPrompt ?? PLANNER_SYSTEM_PROMPT;
+
+      let raw: string;
+      try {
+        const result = await callOpenAICompatible(
+          config,
+          [
+            { role: "system", content: systemPrompt },
+            {
+              role: "user",
+              content: JSON.stringify({
+                goal: input.goal,
+                knowledgeContext,
+                planningPriors,
+                recentRunsSummary: input.recentRunsSummary,
+                failurePatterns: input.failurePatterns,
+                ...(input.episodeContext ? { pastExperience: input.episodeContext } : {})
+              })
+            }
+          ],
+          "LLM planner"
+        );
+        raw = result.content;
+      } catch (err) {
+        if (selectedPrompt) {
+          try { recordPromptOutcome(selectedPrompt.id, false); } catch {}
+        }
+        throw err;
+      }
 
       const parsed = safeJsonParse(unwrapTasksPayload(raw));
 
       if (!Array.isArray(parsed)) {
+        if (selectedPrompt) {
+          try { recordPromptOutcome(selectedPrompt.id, false); } catch {}
+        }
         throw new Error("LLM planner response was not a JSON task array.");
       }
 
-      return parsed
+      const tasks = parsed
         .map((item) => normalizeTaskBlueprint(item))
         .filter((item): item is TaskBlueprint => item !== undefined);
+
+      if (selectedPrompt) {
+        try { recordPromptOutcome(selectedPrompt.id, tasks.length > 0); } catch {}
+      }
+
+      return tasks;
     }
   };
 }
@@ -169,33 +197,58 @@ function createAnthropicPlanner(config: LLMPlannerConfig): LLMPlanner {
       const knowledgeContext = buildKnowledgeContext(input.goal, domain);
       const planningPriors = buildPlanningPriors(input.goal, domain);
 
-      const { content: raw } = await callAnthropic(
-        config,
-        [
-          { role: "system", content: PLANNER_SYSTEM_PROMPT },
-          {
-            role: "user",
-            content: JSON.stringify({
-              goal: input.goal,
-              knowledgeContext,
-              planningPriors,
-              recentRunsSummary: input.recentRunsSummary,
-              failurePatterns: input.failurePatterns
-            })
-          }
-        ],
-        "LLM planner"
-      );
+      let selectedPrompt: { id: string; systemPrompt: string } | undefined;
+      if (!process.env.DISABLE_PROMPT_EVOLUTION) try {
+        selectedPrompt = selectPrompt("planner") ?? undefined;
+      } catch { /* fall back to default */ }
+      const systemPrompt = selectedPrompt?.systemPrompt ?? PLANNER_SYSTEM_PROMPT;
+
+      let raw: string;
+      try {
+        const result = await callAnthropic(
+          config,
+          [
+            { role: "system", content: systemPrompt },
+            {
+              role: "user",
+              content: JSON.stringify({
+                goal: input.goal,
+                knowledgeContext,
+                planningPriors,
+                recentRunsSummary: input.recentRunsSummary,
+                failurePatterns: input.failurePatterns,
+                ...(input.episodeContext ? { pastExperience: input.episodeContext } : {})
+              })
+            }
+          ],
+          "LLM planner"
+        );
+        raw = result.content;
+      } catch (err) {
+        if (selectedPrompt) {
+          try { recordPromptOutcome(selectedPrompt.id, false); } catch {}
+        }
+        throw err;
+      }
 
       const parsed = safeJsonParse(unwrapTasksPayload(raw));
 
       if (!Array.isArray(parsed)) {
+        if (selectedPrompt) {
+          try { recordPromptOutcome(selectedPrompt.id, false); } catch {}
+        }
         throw new Error("LLM planner response was not a JSON task array.");
       }
 
-      return parsed
+      const tasks = parsed
         .map((item) => normalizeTaskBlueprint(item))
         .filter((item): item is TaskBlueprint => item !== undefined);
+
+      if (selectedPrompt) {
+        try { recordPromptOutcome(selectedPrompt.id, tasks.length > 0); } catch {}
+      }
+
+      return tasks;
     }
   };
 }

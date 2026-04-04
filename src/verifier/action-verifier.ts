@@ -8,6 +8,7 @@ export async function verifyActionResult(
 ): Promise<VerificationResult> {
   const evidence: string[] = [];
   let passed = true;
+  let confidence = 0.8;
   let rationale = "Action result looks plausible.";
 
   switch (task.type) {
@@ -45,6 +46,15 @@ export async function verifyActionResult(
         ? `${task.type} completed and no observation anomaly was detected.`
         : `${task.type} completed but the observation engine reported anomalies.`;
       evidence.push(`anomalyCount=${observation.anomalies.length}`);
+
+      const selector = String(task.payload.selector ?? "");
+      if (selector && observation.actionableElements?.length) {
+        const found = observation.actionableElements.some(
+          (el: { selector?: string }) => el.selector === selector
+        );
+        evidence.push(`targetInObservation=${found}`);
+        if (passed && found) confidence = 0.85;
+      }
       break;
     }
 
@@ -82,16 +92,78 @@ export async function verifyActionResult(
       break;
     }
 
-    case "http_request":
+    case "http_request": {
+      if (task.error) {
+        passed = false;
+        rationale = `http_request failed: ${task.error}`;
+        evidence.push(`taskError=${task.error}`);
+        break;
+      }
+      const httpArtifact = context.artifacts.find(
+        (a) => a.type === "http_response" && a.taskId === task.id
+      );
+      if (httpArtifact) {
+        evidence.push(`artifact=${httpArtifact.description}`);
+        const statusMatch = httpArtifact.description.match(/->?\s*(\d+)/);
+        if (statusMatch) {
+          const status = Number(statusMatch[1]);
+          passed = status >= 200 && status < 400;
+          rationale = passed
+            ? `http_request completed with status ${status}.`
+            : `http_request returned non-success status ${status}.`;
+          confidence = 0.85;
+          evidence.push(`httpStatus=${status}`);
+        } else {
+          passed = true;
+          confidence = 0.85;
+          rationale = "http_request completed and response artifact was created.";
+        }
+      } else {
+        passed = true;
+        rationale = "http_request completed without error.";
+        evidence.push("taskError=none");
+      }
+      break;
+    }
+
+    case "run_code": {
+      if (task.error) {
+        passed = false;
+        rationale = `run_code failed: ${task.error}`;
+        evidence.push(`taskError=${task.error}`);
+        break;
+      }
+      const codeArtifact = context.artifacts.find(
+        (a) => a.type === "code_output" && a.taskId === task.id
+      );
+      passed = true;
+      rationale = codeArtifact
+        ? "run_code completed with exit 0 and produced output."
+        : "run_code completed with exit 0 (no output).";
+      if (codeArtifact) confidence = 0.85;
+      evidence.push("taskError=none");
+      evidence.push(`hasOutput=${Boolean(codeArtifact)}`);
+      break;
+    }
+
     case "read_file":
     case "write_file":
-    case "run_code":
     case "visual_extract": {
       passed = !task.error;
       rationale = passed
         ? `${task.type} completed without error.`
         : `${task.type} failed with error: ${task.error}`;
       evidence.push(`taskError=${task.error ?? "none"}`);
+      break;
+    }
+
+    case "scroll": {
+      passed = observation.anomalies.length === 0;
+      confidence = 0.75;
+      rationale = passed
+        ? "scroll completed without anomalies."
+        : "scroll completed but anomalies were detected.";
+      evidence.push(`anomalyCount=${observation.anomalies.length}`);
       break;
     }
 
@@ -119,7 +191,7 @@ export async function verifyActionResult(
     taskId: task.id,
     verifier: "action",
     passed,
-    confidence: passed ? 0.8 : 0.55,
+    confidence: passed ? confidence : Math.min(confidence, 0.55),
     rationale,
     evidence
   };

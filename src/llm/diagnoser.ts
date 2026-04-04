@@ -7,6 +7,7 @@ import {
   readProviderConfig,
   safeJsonParse
 } from "./provider";
+import { selectPrompt, recordPromptOutcome } from "../learning/prompt-evolver";
 
 export type LLMDiagnoserConfig = LLMProviderConfig;
 
@@ -118,23 +119,48 @@ function createOpenAICompatibleDiagnoser(config: LLMDiagnoserConfig): LLMDiagnos
   return {
     config,
     async diagnose(input: LLMDiagnoserInput): Promise<LLMDiagnoserOutput> {
-      const { content: raw } = await callOpenAICompatible(
-        config,
-        [
-          { role: "system", content: DIAGNOSER_SYSTEM_PROMPT },
-          { role: "user", content: JSON.stringify(input) }
-        ],
-        "LLM diagnoser"
-      );
+      let selectedPrompt: { id: string; systemPrompt: string } | undefined;
+      if (!process.env.DISABLE_PROMPT_EVOLUTION) try {
+        selectedPrompt = selectPrompt("diagnoser") ?? undefined;
+      } catch { /* fall back to default */ }
+      const systemPrompt = selectedPrompt?.systemPrompt ?? DIAGNOSER_SYSTEM_PROMPT;
+
+      let raw: string;
+      try {
+        const result = await callOpenAICompatible(
+          config,
+          [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: JSON.stringify(input) }
+          ],
+          "LLM diagnoser"
+        );
+        raw = result.content;
+      } catch (err) {
+        if (selectedPrompt) {
+          try { recordPromptOutcome(selectedPrompt.id, false); } catch {}
+        }
+        throw err;
+      }
 
       const parsed = safeJsonParse(raw);
       if (!parsed || typeof parsed !== "object") {
+        if (selectedPrompt) {
+          try { recordPromptOutcome(selectedPrompt.id, false); } catch {}
+        }
         throw new Error("LLM diagnoser response was not a JSON object.");
       }
 
       const normalized = normalizeDiagnoserOutput(parsed);
       if (!normalized) {
+        if (selectedPrompt) {
+          try { recordPromptOutcome(selectedPrompt.id, false); } catch {}
+        }
         throw new Error("LLM diagnoser output failed schema validation.");
+      }
+
+      if (selectedPrompt) {
+        try { recordPromptOutcome(selectedPrompt.id, true); } catch {}
       }
 
       return normalized;
@@ -146,23 +172,48 @@ function createAnthropicDiagnoser(config: LLMDiagnoserConfig): LLMDiagnoser {
   return {
     config,
     async diagnose(input: LLMDiagnoserInput): Promise<LLMDiagnoserOutput> {
-      const { content: raw } = await callAnthropic(
-        config,
-        [
-          { role: "system", content: DIAGNOSER_SYSTEM_PROMPT },
-          { role: "user", content: JSON.stringify(input) }
-        ],
-        "LLM diagnoser"
-      );
+      let selectedPrompt: { id: string; systemPrompt: string } | undefined;
+      if (!process.env.DISABLE_PROMPT_EVOLUTION) try {
+        selectedPrompt = selectPrompt("diagnoser") ?? undefined;
+      } catch { /* fall back to default */ }
+      const systemPrompt = selectedPrompt?.systemPrompt ?? DIAGNOSER_SYSTEM_PROMPT;
+
+      let raw: string;
+      try {
+        const result = await callAnthropic(
+          config,
+          [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: JSON.stringify(input) }
+          ],
+          "LLM diagnoser"
+        );
+        raw = result.content;
+      } catch (err) {
+        if (selectedPrompt) {
+          try { recordPromptOutcome(selectedPrompt.id, false); } catch {}
+        }
+        throw err;
+      }
 
       const parsed = safeJsonParse(raw);
       if (!parsed || typeof parsed !== "object") {
+        if (selectedPrompt) {
+          try { recordPromptOutcome(selectedPrompt.id, false); } catch {}
+        }
         throw new Error("LLM diagnoser response was not a JSON object.");
       }
 
       const normalized = normalizeDiagnoserOutput(parsed);
       if (!normalized) {
+        if (selectedPrompt) {
+          try { recordPromptOutcome(selectedPrompt.id, false); } catch {}
+        }
         throw new Error("LLM diagnoser output failed schema validation.");
+      }
+
+      if (selectedPrompt) {
+        try { recordPromptOutcome(selectedPrompt.id, true); } catch {}
       }
 
       return normalized;

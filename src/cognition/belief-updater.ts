@@ -1,4 +1,5 @@
 import type { BeliefUpdate, ExperimentResult, FailureHypothesis } from "./types";
+import { betaMean } from "./types";
 
 export function applyBeliefUpdates(input: {
   runId: string;
@@ -13,11 +14,26 @@ export function applyBeliefUpdates(input: {
   const updatedHypotheses = input.hypotheses.map((hypothesis) => {
     const relatedResults = input.experimentResults.filter((result) => result.hypothesisId === hypothesis.id);
     const previousConfidence = hypothesis.confidence;
-    const delta = relatedResults.reduce((sum, result) => {
-      const weight = inferExperimentReliability(result.experiment);
-      return sum + result.confidenceDelta * weight;
-    }, 0);
-    const nextConfidence = clamp(previousConfidence + delta, 0.05, 0.98);
+
+    // Clone belief to avoid mutating the input
+    const belief = hypothesis.belief
+      ? { alpha: hypothesis.belief.alpha, beta: hypothesis.belief.beta }
+      : { alpha: 2, beta: 1 };
+
+    // Update Beta distribution based on experiment outcomes
+    for (const result of relatedResults) {
+      const reliabilityWeight = inferExperimentReliability(result.experiment);
+      if (result.outcome === "support") {
+        belief.alpha += reliabilityWeight;
+      } else if (result.outcome === "refute") {
+        belief.beta += reliabilityWeight;
+      }
+      // "inconclusive" — no change to belief
+    }
+
+    // Derive scalar confidence from Beta mean for backward compatibility
+    const nextConfidence = betaMean(belief);
+
     updates.push({
       id: `belief-${input.runId}-${Math.random().toString(36).slice(2, 8)}`,
       runId: input.runId,
@@ -26,12 +42,13 @@ export function applyBeliefUpdates(input: {
       previousConfidence,
       nextConfidence,
       rationale: relatedResults.length > 0
-        ? `Updated from ${previousConfidence.toFixed(2)} to ${nextConfidence.toFixed(2)} after ${relatedResults.length} experiment(s).`
+        ? `Updated from ${previousConfidence.toFixed(2)} to ${nextConfidence.toFixed(2)} after ${relatedResults.length} experiment(s). Beta(${belief.alpha.toFixed(2)}, ${belief.beta.toFixed(2)})`
         : `No experiment updated this hypothesis; confidence remains ${nextConfidence.toFixed(2)}.`
     });
 
     return {
       ...hypothesis,
+      belief,
       confidence: nextConfidence
     };
   });

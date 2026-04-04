@@ -148,3 +148,53 @@ test("default task type passes with state consistent", async () => {
   assert.equal(result.passed, true);
   assert.ok(result.confidence >= 0.7);
 });
+
+// ── Expanded state verifier tests ───────────────────────────────────────────
+
+test("type task passes state check without error", async () => {
+  const ctx = makeContext();
+  const task = makeTask({ type: "type", payload: { selector: "#email", value: "user@test.com" } });
+  const obs = makeObservation();
+  const result = await verifyStateResult(ctx, task, obs);
+  assert.equal(result.passed, true);
+  assert.ok(result.evidence.some((e) => e.includes("typedValue=user@test.com")));
+});
+
+test("http_request passes state check with artifact", async () => {
+  const ctx = makeContext({
+    artifacts: [{ type: "http_response", path: "", description: "GET /api -> 200", taskId: "task-1" }]
+  });
+  const task = makeTask({ type: "http_request", id: "task-1", payload: { url: "/api" } });
+  const obs = makeObservation();
+  const result = await verifyStateResult(ctx, task, obs);
+  assert.equal(result.passed, true);
+  assert.ok(result.evidence.some((e) => e.includes("artifact=")));
+});
+
+test("run_code fails state check when task has error", async () => {
+  const ctx = makeContext();
+  const task = makeTask({ type: "run_code", payload: { language: "javascript", code: "throw 1" }, error: "exit 1" });
+  const obs = makeObservation();
+  const result = await verifyStateResult(ctx, task, obs);
+  assert.equal(result.passed, false);
+  assert.ok(result.rationale.includes("exit 1"));
+});
+
+test("run_code passes state check with code_output artifact", async () => {
+  const ctx = makeContext({
+    artifacts: [{ type: "code_output", path: "", description: "stdout: 42", taskId: "task-1" }]
+  });
+  const task = makeTask({ type: "run_code", id: "task-1", payload: { language: "javascript", code: "1+1" } });
+  const obs = makeObservation();
+  const result = await verifyStateResult(ctx, task, obs);
+  assert.equal(result.passed, true);
+  assert.ok(result.evidence.some((e) => e.includes("artifact=")));
+});
+
+test("scroll passes state check", async () => {
+  const ctx = makeContext();
+  const task = makeTask({ type: "scroll", payload: { direction: "down" } });
+  const obs = makeObservation();
+  const result = await verifyStateResult(ctx, task, obs);
+  assert.equal(result.passed, true);
+});

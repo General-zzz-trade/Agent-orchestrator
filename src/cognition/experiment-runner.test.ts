@@ -42,6 +42,7 @@ function makeHypothesis(kind: FailureHypothesis["kind"], overrides: Partial<Fail
     kind,
     explanation: `Hypothesis: ${kind}`,
     confidence: 0.6,
+    belief: { alpha: 2, beta: 1 },
     suggestedExperiments: [],
     recoveryHint: "Recover",
     ...overrides

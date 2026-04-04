@@ -248,3 +248,68 @@ test("open_page verification with url mismatch", async () => {
   const result = await verifyActionResult(ctx, task, obs);
   assert.equal(result.passed, false);
 });
+
+// ── Enhanced verification tests ─────────────────────────────────────────────
+
+test("http_request with http_response artifact has higher confidence", async () => {
+  const ctx = makeContext({
+    artifacts: [{ type: "http_response", path: "", description: "GET http://example.com -> 200", taskId: "task-1" }]
+  });
+  const task = makeTask({ type: "http_request", id: "task-1", payload: { url: "http://example.com" } });
+  const obs = makeObservation();
+  const result = await verifyActionResult(ctx, task, obs);
+  assert.equal(result.passed, true);
+  assert.ok(result.confidence >= 0.85, `expected confidence >= 0.85, got ${result.confidence}`);
+  assert.ok(result.evidence.some((e) => e.includes("httpStatus=200")));
+});
+
+test("http_request with error includes error in rationale", async () => {
+  const ctx = makeContext();
+  const task = makeTask({ type: "http_request", payload: { url: "http://example.com" }, error: "HTTP 502" });
+  const obs = makeObservation();
+  const result = await verifyActionResult(ctx, task, obs);
+  assert.equal(result.passed, false);
+  assert.ok(result.rationale.includes("HTTP 502"));
+});
+
+test("run_code with code_output artifact reports hasOutput in evidence", async () => {
+  const ctx = makeContext({
+    artifacts: [{ type: "code_output", path: "", description: "stdout output", taskId: "task-1" }]
+  });
+  const task = makeTask({ type: "run_code", id: "task-1", payload: { language: "javascript", code: "1+1" } });
+  const obs = makeObservation();
+  const result = await verifyActionResult(ctx, task, obs);
+  assert.equal(result.passed, true);
+  assert.ok(result.confidence >= 0.85);
+  assert.ok(result.evidence.some((e) => e === "hasOutput=true"));
+});
+
+test("scroll passes without anomalies", async () => {
+  const ctx = makeContext();
+  const task = makeTask({ type: "scroll", payload: { direction: "down" } });
+  const obs = makeObservation({ anomalies: [] });
+  const result = await verifyActionResult(ctx, task, obs);
+  assert.equal(result.passed, true);
+  assert.ok(result.confidence <= 0.8, "scroll confidence should be lower than standard actions");
+});
+
+test("scroll fails with anomalies", async () => {
+  const ctx = makeContext();
+  const task = makeTask({ type: "scroll", payload: { direction: "down" } });
+  const obs = makeObservation({ anomalies: ["Page did not scroll"] });
+  const result = await verifyActionResult(ctx, task, obs);
+  assert.equal(result.passed, false);
+});
+
+test("click with actionableElements matching selector reports target in evidence", async () => {
+  const ctx = makeContext();
+  const task = makeTask({ type: "click", payload: { selector: "#login-btn" } });
+  const obs = makeObservation({
+    anomalies: [],
+    actionableElements: [{ selector: "#login-btn", text: "Login", confidence: 0.9 }]
+  });
+  const result = await verifyActionResult(ctx, task, obs);
+  assert.equal(result.passed, true);
+  assert.ok(result.confidence >= 0.85);
+  assert.ok(result.evidence.some((e) => e === "targetInObservation=true"));
+});

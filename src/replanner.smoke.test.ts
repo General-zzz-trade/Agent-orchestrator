@@ -76,6 +76,7 @@ test("replanner smoke: top hypothesis drives rule strategy", async () => {
       kind: "selector_drift",
       explanation: "Selector likely drifted.",
       confidence: 0.91,
+      belief: { alpha: 2, beta: 1 },
       suggestedExperiments: ["check selector presence"],
       recoveryHint: "Prefer visual fallback."
     }
@@ -125,6 +126,7 @@ test("replanner smoke: procedural prior drives rule strategy", async () => {
       kind: "selector_drift",
       explanation: "Selector likely drifted.",
       confidence: 0.88,
+      belief: { alpha: 2, beta: 1 },
       suggestedExperiments: ["probe selector"],
       recoveryHint: "Use prior visual fallback."
     }

@@ -2,7 +2,7 @@ import Fastify from "fastify";
 import cors from "@fastify/cors";
 import staticFiles from "@fastify/static";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+// fileURLToPath removed — using __dirname instead (CommonJS)
 import { runsRoutes } from "./routes/runs";
 import { streamRoutes } from "./routes/stream";
 import { schedulesRoutes } from "./routes/schedules";
@@ -36,7 +36,7 @@ export async function buildServer() {
   await app.register(cors, { origin: true });
 
   // Serve Web UI from public/ directory
-  const publicDir = join(fileURLToPath(import.meta.url), "../../../public");
+  const publicDir = join(__dirname, "../../public");
   await app.register(staticFiles, { root: publicDir, prefix: "/" });
 
   // Rate limiting on all API routes
@@ -122,7 +122,6 @@ async function main() {
 }
 
 // Only start server when executed directly (not imported by tests)
-import { pathToFileURL } from "node:url";
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (require.main === module) {
   void main();
 }

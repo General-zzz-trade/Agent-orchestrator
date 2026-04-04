@@ -35,6 +35,14 @@ import { extractCausalTransitions } from "../world-model/extractor";
 import { inferGoalState, inferCurrentState } from "../decomposer/causal-decomposer";
 import { runReflection } from "../learning/reflection-loop";
 import { applyInsights } from "../learning/strategy-updater";
+// Level-4 cognitive modules
+import { encodeObservation, detectLoop, assignCluster } from "../world-model/state-encoder";
+import { suggestAlternativeActions } from "../world-model/counterfactual";
+import { synthesizeRecovery, recordRecoveryOutcome, programToTasks } from "../cognition/recovery-synthesizer";
+import { recordPlannerOutcome } from "../planner/thompson-sampling";
+import { updateWeights, computeAdaptiveMultiplier } from "../learning/weight-optimizer";
+import { restoreAllLearning, persistAllLearning } from "../learning/persistence";
+import { createTokenBudget, canSpendTokens, recordTokenSpend, resetRecoveryBudget, type TokenBudget } from "../observability/token-budget";
 
 export interface RunOptions {
   maxReplansPerRun?: number;
@@ -52,9 +60,23 @@ export interface RunOptions {
   worldState?: RunContext["worldState"];
   /** Keep browser session alive after run (caller manages cleanup) */
   keepBrowserAlive?: boolean;
+  /** Use HTN hierarchical decomposition mode */
+  executionMode?: "sequential" | "htn";
 }
 
 export async function runGoal(goal: string, options: RunOptions = {}): Promise<RunContext> {
+  // Dispatch to HTN mode: only when explicitly requested (avoid overhead for DSL goals)
+  const useHTN = options.executionMode === "htn";
+  if (useHTN) {
+    try {
+      const { runGoalHTN } = await import("./htn-runtime");
+      const htnResult = await runGoalHTN(goal, { ...options, maxDepth: 3 });
+      if (htnResult.lastContext) return htnResult.lastContext;
+    } catch {
+      // HTN failed — fall through to sequential execution
+    }
+  }
+
   const limits: RunLimits = {
     maxReplansPerRun: options.maxReplansPerRun ?? 3,
     maxReplansPerTask: options.maxReplansPerTask ?? 1
@@ -69,15 +91,25 @@ export async function runGoal(goal: string, options: RunOptions = {}): Promise<R
   const usageLedger = createUsageLedger();
   const onlineAdapter = createOnlineAdapterState();
   const causalGraph = createCausalGraph();
+  try { restoreAllLearning(); } catch { /* learning restore is best-effort */ }
+  const stateEmbeddingHistory: number[][] = [];  // Leap 3: for loop detection
+  let consecutiveLoopDetections = 0;  // Only act on consecutive loop signals
+  const tokenBudget = createTokenBudget();
 
-  // Integration: Semantic memory — retrieve similar past episodes for planner context
+  // Integration: Rich context injection — episodes + lessons + selectors + failure warnings
   let episodeContext = "";
   try {
     initEpisodesTable();
-    const similarEpisodes = await findSimilarEpisodes(goal, 3);
-    episodeContext = formatEpisodesAsContext(similarEpisodes);
+    const { buildInjectedContext, formatContextForPrompt } = await import("../memory/context-injector");
+    const domain = goal.match(/https?:\/\/([^\/\s"]+)/)?.[1]?.replace(/^www\./, "");
+    const injected = await buildInjectedContext(goal, domain);
+    episodeContext = formatContextForPrompt(injected);
   } catch {
-    // Episode retrieval is optional — continue without it
+    // Rich context injection failed — try basic episode retrieval
+    try {
+      const similarEpisodes = await findSimilarEpisodes(goal, 3);
+      episodeContext = formatEpisodesAsContext(similarEpisodes);
+    } catch { /* continue without context */ }
   }
 
   const planResult = await planTasks(goal, {
@@ -86,7 +118,8 @@ export async function runGoal(goal: string, options: RunOptions = {}): Promise<R
     maxLLMPlannerCalls: options.maxLLMPlannerCalls ?? 1,
     tieBreakerPolicy,
     policy,
-    usageLedger
+    usageLedger,
+    episodeContext
   });
 
   // Use injected world state or create fresh
@@ -179,6 +212,43 @@ export async function runGoal(goal: string, options: RunOptions = {}): Promise<R
           stateHints: output.stateHints
         }), "task_observe", "post_task_verification");
 
+        // Integration: State embedding + loop detection (Leap 3)
+        if (!process.env.DISABLE_LOOP_DETECTION) try {
+          const stateEmb = encodeObservation(afterObservation);
+          const loopCheck = detectLoop(stateEmb, stateEmbeddingHistory);
+          stateEmbeddingHistory.push(stateEmb);
+          if (stateEmbeddingHistory.length > 50) stateEmbeddingHistory.shift();
+          const label = afterObservation.pageUrl ?? "unknown";
+          const domain = inferCurrentState({ pageUrl: afterObservation.pageUrl }).split("|")[0] ?? "";
+          assignCluster(stateEmb, label, domain);
+          if (loopCheck.isLoop && loopCheck.similarity >= 0.99) {
+            consecutiveLoopDetections++;
+          } else {
+            consecutiveLoopDetections = 0;
+          }
+          // Only trigger escape after 2 consecutive high-confidence loop detections
+          // AND at least 3 tasks have been executed (avoid false positives on startup)
+          if (consecutiveLoopDetections >= 2 && index >= 3) {
+            consecutiveLoopDetections = 0;
+            appendEpisodeEvent(context, {
+              taskId: task.id,
+              kind: "observe",
+              summary: `Confirmed loop: ${consecutiveLoopDetections} consecutive detections (similarity ${loopCheck.similarity.toFixed(2)}). Triggering replan.`,
+              metadata: { similarity: loopCheck.similarity, matchIndex: loopCheck.matchIndex }
+            });
+            const loopRecovery = await analyzeRecoveryOptions(
+              context, task,
+              `Confirmed loop: agent stuck revisiting state from step ${loopCheck.matchIndex}`,
+              causalGraph, tokenBudget
+            );
+            const handled = await handleReplan(context, task, loopRecovery, options, summaries, index);
+            if (handled.nextIndex !== null) {
+              index = handled.nextIndex;
+              continue;
+            }
+          }
+        } catch { /* state encoding is optional */ }
+
         // Integration: Anomaly detection — check for unexpected state after each task
         const anomalyReport = detectAnomalies(task, beforeObservation, afterObservation, context);
         if (anomalyReport.anomalies.length > 0) {
@@ -202,6 +272,14 @@ export async function runGoal(goal: string, options: RunOptions = {}): Promise<R
 
         // Integration: Meta-cognition — adjust confidence based on experience
         const experienceAssessment = assessExperience(context, task);
+        // Leap 7: Use adaptive weights instead of hardcoded multiplier
+        if (!process.env.DISABLE_ADAPTIVE_WEIGHTS) try {
+          experienceAssessment.confidenceMultiplier = computeAdaptiveMultiplier(
+            experienceAssessment.domainFamiliarity,
+            experienceAssessment.selectorRiskLevel,
+            experienceAssessment.stuckLevel
+          );
+        } catch { /* adaptive weights optional */ }
 
         const rawDecision = isLLMDecisionConfigured()
           ? await llmDecideNextStep({
@@ -282,12 +360,15 @@ export async function runGoal(goal: string, options: RunOptions = {}): Promise<R
         }
 
         if (cognitiveDecision.nextAction === "replan" || cognitiveDecision.nextAction === "retry_task") {
-          const recoveryReason = await analyzeRecoveryOptions(
-            context,
-            task,
-            `${task.type} verification requested recovery: ${cognitiveDecision.rationale}`,
-            causalGraph
-          );
+          // Only run expensive hypothesis/counterfactual analysis if verification actually failed
+          const verificationFailed = !actionVerification.passed || !stateVerification.passed;
+          const recoveryReason = verificationFailed
+            ? await analyzeRecoveryOptions(
+                context, task,
+                `${task.type} verification requested recovery: ${cognitiveDecision.rationale}`,
+                causalGraph, tokenBudget
+              )
+            : `${task.type}: ${cognitiveDecision.rationale}`;
           const handled = await handleReplan(
             context,
             task,
@@ -306,6 +387,30 @@ export async function runGoal(goal: string, options: RunOptions = {}): Promise<R
         if (index > 0 && index % 5 === 0) {
           const { saveCheckpoint } = await import("./checkpoint");
           saveCheckpoint(context, index - 1, summaries);
+
+          // Integration: Proactive exploration — build causal graph knowledge at checkpoints
+          try {
+            const { selectNextExplorationAction } = await import("../exploration/proactive-explorer");
+            const currentState = inferCurrentState({
+              pageUrl: context.worldState?.pageUrl,
+              appState: context.worldState?.appState,
+              visibleText: context.latestObservation?.visibleText
+            });
+            const elements = (context.latestObservation?.actionableElements ?? []).map(el => ({
+              selector: el.selector ?? "",
+              text: el.text ?? "",
+              type: el.role ?? "button"
+            }));
+            const explorationHint = selectNextExplorationAction(currentState, causalGraph, new Map(), elements);
+            if (explorationHint.action !== "stop") {
+              appendEpisodeEvent(context, {
+                taskId: task.id,
+                kind: "observe",
+                summary: `Proactive exploration hint: ${explorationHint.action} "${explorationHint.target ?? ""}" — ${explorationHint.reason}`,
+                metadata: { explorationAction: explorationHint.action, target: explorationHint.target ?? "" }
+              });
+            }
+          } catch { /* proactive exploration is optional */ }
         }
 
         index += 1;
@@ -358,7 +463,7 @@ export async function runGoal(goal: string, options: RunOptions = {}): Promise<R
           throw error;
         }
 
-        const recoveryReason = await analyzeRecoveryOptions(context, task, message, causalGraph);
+        const recoveryReason = await analyzeRecoveryOptions(context, task, message, causalGraph, tokenBudget);
         const handled = await handleReplan(context, task, recoveryReason, options, summaries, index);
         if (handled.nextIndex !== null) {
           index = handled.nextIndex;
@@ -387,6 +492,7 @@ export async function runGoal(goal: string, options: RunOptions = {}): Promise<R
     };
     context.terminationReason = determineTerminationReason(message);
   } finally {
+    try { persistAllLearning(); } catch { /* learning persist is best-effort */ }
     context.endedAt = new Date().toISOString();
     const { clearApprovals } = await import("../approval/gate");
     clearApprovals(context.runId);
@@ -406,6 +512,28 @@ export async function runGoal(goal: string, options: RunOptions = {}): Promise<R
     finalizeUsageLedger(context);
     extractKnowledgeFromRun(context);
 
+    // Integration: Thompson Sampling — record planner outcome (Leap 2)
+    try {
+      const goalCategory = "general";  // simplified; could use classifyGoalCategory
+      const success = context.result?.success ?? false;
+      recordPlannerOutcome(context.plannerUsed ?? "template", goalCategory, success, context.usageLedger?.totalInputTokens ?? 0);
+    } catch { /* planner stats optional */ }
+
+    // Integration: Weight optimizer — update adaptive meta-cognition weights (Leap 7)
+    try {
+      const avgFamiliarity = 0.5;  // heuristic: mid-range for batch update
+      const failedTasks = context.tasks.filter(t => t.status === "failed").length;
+      const selectorRisk = context.tasks.length > 0 ? failedTasks / context.tasks.length : 0;
+      const stuckLevel = context.limits.maxReplansPerRun > 0 ? context.replanCount / context.limits.maxReplansPerRun : 0;
+      const actualOutcome = context.result?.success ? 1.0 : 0.0;
+      const predictedConfidence = computeAdaptiveMultiplier(avgFamiliarity, selectorRisk, stuckLevel);
+      updateWeights(predictedConfidence, actualOutcome, {
+        domainFamiliarity: avgFamiliarity,
+        selectorRisk,
+        stuckLevel
+      });
+    } catch { /* weight update optional */ }
+
     // Integration: Reflection loop — analyze failure patterns and evolve strategies
     try {
       const reflectionInsight = runReflection();
@@ -424,6 +552,13 @@ export async function runGoal(goal: string, options: RunOptions = {}): Promise<R
     } catch {
       // Reflection is optional — never block run completion
     }
+
+    // Integration: Prompt evolution — mutate worst-performing prompts after each run
+    try {
+      const { mutatePrompt } = await import("../learning/prompt-evolver");
+      await mutatePrompt("planner");
+      await mutatePrompt("replanner");
+    } catch { /* prompt evolution is optional */ }
 
     // Integration: Causal graph — extract state transitions and persist for future runs
     try {
@@ -586,6 +721,26 @@ async function handleReplan(
     await observeAndRecord(context, task, "Recovery follow-up observation", "recovery_followup");
   }
 
+  // Execute synthesized recovery program if replanner produced nothing
+  if (decision.insertTasks.length === 0 && decision.replaceWith.length === 0 && !decision.abort) {
+    const pendingProgram = (context as unknown as Record<string, unknown>).__pendingRecoveryProgram as
+      import("../cognition/types").RecoveryProgram | undefined;
+    if (pendingProgram && pendingProgram.steps.length > 0) {
+      const recoveryTasks = programToTasks(pendingProgram, task.id);
+      context.insertedTaskCount += recoveryTasks.length;
+      context.tasks.splice(index + 1, 0, ...recoveryTasks);
+      appendEpisodeEvent(context, {
+        taskId: task.id,
+        kind: "recover",
+        summary: `Executing synthesized recovery program (${recoveryTasks.length} steps)`,
+        metadata: { programId: pendingProgram.id, steps: recoveryTasks.length }
+      });
+      (context as unknown as Record<string, unknown>).__pendingRecoveryProgram = undefined;
+      await observeAndRecord(context, task, "Recovery program follow-up observation", "recovery_followup");
+      return { nextIndex: index + 1 };
+    }
+  }
+
   if (decision.abort) {
     return { nextIndex: null };
   }
@@ -635,10 +790,10 @@ function recordDecision(
   context: RunContext,
   taskId: string | undefined,
   summary: string,
-  decision: RunContext["cognitiveDecisions"][number]
+  decision: { nextAction: string; rationale: string; confidence: number }
 ): void {
   context.cognitiveDecisions ??= [];
-  context.cognitiveDecisions.push(decision);
+  context.cognitiveDecisions.push(decision as import("../cognition/types").CognitiveDecision);
   appendEpisodeEvent(context, {
     taskId,
     kind: decision.nextAction === "abort" ? "abort" : decision.nextAction === "replan" ? "recover" : "verify",
@@ -691,7 +846,8 @@ async function analyzeRecoveryOptions(
   context: RunContext,
   task: RunContext["tasks"][number],
   failureReason: string,
-  causalGraph?: CausalGraph
+  causalGraph?: CausalGraph,
+  tokenBudget?: TokenBudget
 ): Promise<string> {
   // Causal graph: check if there's a known alternative path to the goal
   if (causalGraph && causalGraph.edges.size > 0) {
@@ -708,11 +864,16 @@ async function analyzeRecoveryOptions(
     }
   }
 
-  const hypotheses = generateFailureHypotheses({
+  // Token budget gate: skip LLM hypothesis generation if budget exhausted
+  if (tokenBudget && !canSpendTokens(tokenBudget, "hypothesis", 500)) {
+    return `${failureReason} [Token budget exhausted for hypothesis generation]`;
+  }
+  const hypotheses = await generateFailureHypotheses({
     context,
     task,
     failureReason
   });
+  if (tokenBudget) recordTokenSpend(tokenBudget, "hypothesis", 500);
   appendEpisodeEvent(context, {
     taskId: task.id,
     kind: "hypothesize",
@@ -769,6 +930,65 @@ async function analyzeRecoveryOptions(
       topConfidence: topHypothesis.confidence
     }
   });
+
+  // Integration: Counterfactual reasoning (Leap 6) — suggest alternative actions
+  if (causalGraph && causalGraph.edges.size > 0 && !process.env.DISABLE_COUNTERFACTUAL) {
+    try {
+      const currentState = inferCurrentState({
+        pageUrl: context.worldState?.pageUrl,
+        appState: context.worldState?.appState,
+        visibleText: context.latestObservation?.visibleText
+      });
+      const alternatives = suggestAlternativeActions(causalGraph, currentState, task.type);
+      if (alternatives.length > 0) {
+        const topAlt = alternatives[0];
+        const altHint = alternatives.slice(0, 3).map(a => `${a.action}("${a.detail}") ${(a.successProbability * 100).toFixed(0)}%`).join(", ");
+        failureReason = `${failureReason} [Counterfactual alternatives: ${altHint}]`;
+        appendEpisodeEvent(context, {
+          taskId: task.id,
+          kind: "recover",
+          summary: `Counterfactual: ${alternatives.length} alternative(s). Top: ${topAlt.action}("${topAlt.detail}") p=${topAlt.successProbability.toFixed(2)}`,
+          metadata: { topAlternative: topAlt.action, probability: topAlt.successProbability }
+        });
+        // FUNCTIONAL: If top alternative has high causal success probability,
+        // override the recovery hint to use it instead of the default hypothesis recovery
+        if (topAlt.successProbability >= 0.6 && topAlt.detail) {
+          topHypothesis.recoveryHint =
+            `Counterfactual-driven: use ${topAlt.action}("${topAlt.detail}") instead (causal p=${topAlt.successProbability.toFixed(2)})`;
+        }
+      }
+    } catch { /* counterfactual is optional */ }
+  }
+
+  // Integration: Program synthesis recovery (Leap 5) — try LLM-synthesized recovery
+  // Token budget gate: skip if recovery budget exhausted or module disabled
+  if (process.env.DISABLE_RECOVERY_SYNTHESIS) {
+    return `${failureReason} Top hypothesis=${topHypothesis.kind} confidence=${topHypothesis.confidence.toFixed(2)}. ${topHypothesis.recoveryHint}`;
+  }
+  if (tokenBudget && !canSpendTokens(tokenBudget, "recovery", 1000)) {
+    return `${failureReason} Top hypothesis=${topHypothesis.kind} confidence=${topHypothesis.confidence.toFixed(2)}. ${topHypothesis.recoveryHint} [Recovery token budget exhausted]`;
+  }
+  try {
+    const previousAttempts = context.hypotheses
+      ?.filter(h => h.taskId === task.id)
+      .map(h => h.recoveryHint) ?? [];
+    const recoveryProgram = await synthesizeRecovery({
+      context, task, error: failureReason, previousAttempts
+    });
+    if (recoveryProgram) {
+      const recoveryTasks = programToTasks(recoveryProgram, task.id);
+      if (recoveryTasks.length > 0) {
+        appendEpisodeEvent(context, {
+          taskId: task.id,
+          kind: "recover",
+          summary: `Synthesized recovery program: ${recoveryTasks.length} step(s)`,
+          metadata: { programId: recoveryProgram.id, steps: recoveryTasks.length }
+        });
+        // Record for future skill library matching
+        (context as unknown as Record<string, unknown>).__pendingRecoveryProgram = recoveryProgram;
+      }
+    }
+  } catch { /* recovery synthesis is optional */ }
 
   return `${failureReason} Top hypothesis=${topHypothesis.kind} confidence=${topHypothesis.confidence.toFixed(2)}. ${topHypothesis.recoveryHint}`;
 }

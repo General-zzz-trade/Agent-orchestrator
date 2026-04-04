@@ -35,6 +35,8 @@ import { planFromKnowledge } from "./knowledge-template-planner";
 import { applyPlanningPriors } from "./prior-aware-planner";
 import { causalDecompose, inferGoalState, inferCurrentState } from "../decomposer/causal-decomposer";
 import { createCausalGraph, deserializeGraph, type CausalGraph } from "../world-model/causal-graph";
+import { selectPlannerThompson } from "./thompson-sampling";
+import { isNaturalLanguageGoal, planFromNaturalLanguage, extractUrlFromGoal } from "./nl-planner";
 
 export type PlannerMode = "auto" | "template" | "regex" | "llm";
 type ConcretePlanner = "template" | "regex" | "llm";
@@ -46,6 +48,8 @@ export interface PlanTasksOptions {
   tieBreakerPolicy?: PlannerTieBreakerPolicy;
   policy?: AgentPolicy;
   usageLedger?: UsageLedger;
+  /** Injected context from past episodes/knowledge for LLM planner prompt enrichment */
+  episodeContext?: string;
 }
 
 export interface PlanTasksResult {
@@ -144,6 +148,92 @@ export async function planTasks(goal: string, options: PlanTasksOptions): Promis
     return await planWithLLMOnly(trimmedGoal, options.runId, llmUsageCap, goalCategory, policy, usageLedger, failurePatterns);
   }
 
+  // Natural language detection — route to LLM planner directly, bypassing
+  // template/regex planners that only understand DSL strings.
+  if (isNaturalLanguageGoal(trimmedGoal)) {
+    try {
+      const nlTasks = await planFromNaturalLanguage(trimmedGoal, {
+        appUrl: extractUrlFromGoal(trimmedGoal),
+        episodeContext: options.episodeContext
+      });
+      if (nlTasks.length > 0) {
+        const nlMaterialized = materializePlan(options.runId, nlTasks);
+        if (nlMaterialized.length > 0) {
+          const nlCandidate = buildCandidate("llm", trimmedGoal, nlMaterialized, "Natural language goal routed directly to LLM planner.");
+          if (nlCandidate.valid && nlCandidate.qualitySummary.quality !== "low") {
+            recordLLMPlannerCall({ usageLedger });
+            const decision = forcedRuleDecision("template", "Natural language goal handled by LLM planner via nl-planner bridge.");
+            decision.useRulePlanner = false;
+            decision.useLLMPlanner = true;
+            const escalationTrace = createEscalationDecisionTrace({
+              stage: "planner",
+              goalCategory,
+              plannerQuality: nlCandidate.qualitySummary.quality,
+              currentFailureType: "none",
+              failurePatterns,
+              usageLedger,
+              policyMode: policy.mode,
+              providerHealth: buildProviderHealth(createPlannerFromEnv(), llmUsageCap),
+              decision
+            });
+            return finalizeCandidate(nlCandidate, [nlCandidate], undefined, llmUsageCap, 1, 0, goalCategory, policy.mode, escalationTrace);
+          }
+        }
+      }
+    } catch {
+      // NL planner failed — fall through to template/regex cascade
+    }
+  }
+
+  // LLM-FIRST STRATEGY: Only for natural language goals.
+  // DSL goals (containing "start app", "click", etc.) go directly to template/regex — faster and more reliable.
+  // LLM is reserved for goals that rule planners cannot handle.
+  const llmProvider = createPlannerFromEnv();
+  if (llmProvider && llmProvider.config.apiKey && !process.env.DISABLE_LLM_FIRST && isNaturalLanguageGoal(trimmedGoal)) {
+    try {
+      recordLLMPlannerCall({ usageLedger });
+      const recentRuns = await loadRecentRuns(3);
+      const llmBlueprints = await llmProvider.plan({
+        goal: trimmedGoal,
+        recentRunsSummary: summarizeRecentRuns(recentRuns),
+        failurePatterns,
+        episodeContext: options.episodeContext
+      });
+      // Track token usage from the LLM call in the usage ledger
+      if (usageLedger) {
+        const { getSnapshot } = require("../observability/metrics-store");
+        const snap = getSnapshot();
+        usageLedger.totalInputTokens = snap.agent_llm_input_tokens_total ?? 0;
+        usageLedger.totalOutputTokens = snap.agent_llm_output_tokens_total ?? 0;
+      }
+      if (llmBlueprints.length > 0 && validateLLMPlannerOutput(llmBlueprints)) {
+        const llmTasks = materializePlan(options.runId, llmBlueprints);
+        if (llmTasks.length > 0) {
+          const llmCandidate = buildCandidate("llm", trimmedGoal, llmTasks, "LLM-first strategy: LLM planner produced a valid plan.");
+          if (llmCandidate.valid) {
+            const decision = forcedRuleDecision("template", "LLM-first: LLM planner succeeded.");
+            decision.useRulePlanner = false;
+            decision.useLLMPlanner = true;
+            const escalationTrace = createEscalationDecisionTrace({
+              stage: "planner", goalCategory,
+              plannerQuality: llmCandidate.qualitySummary.quality,
+              currentFailureType: "none", failurePatterns, usageLedger,
+              policyMode: policy.mode,
+              providerHealth: buildProviderHealth(llmProvider, llmUsageCap),
+              decision
+            });
+            return finalizeCandidate(llmCandidate, [llmCandidate], undefined, llmUsageCap, 1, 0, goalCategory, policy.mode, escalationTrace);
+          }
+        }
+      }
+    } catch (llmError) {
+      // LLM-first failed — log the reason and fall through to knowledge/template/regex
+      const msg = llmError instanceof Error ? llmError.message : String(llmError);
+      console.warn(`[LLM-first] Failed: ${msg}. Falling back to rule planners.`);
+      recordPlannerFallback({ usageLedger });
+    }
+  }
+
   // Try knowledge-template planner first — learned from past runs
   const knowledgeResult = planFromKnowledge(trimmedGoal);
   if (knowledgeResult.matched && knowledgeResult.confidence >= 0.6 && knowledgeResult.blueprints.length > 0) {
@@ -201,7 +291,19 @@ export async function planTasks(goal: string, options: PlanTasksOptions): Promis
   const regexCandidate = buildRuleCandidate("regex", trimmedGoal, options.runId, createRegexPlan(trimmedGoal));
   evaluatedCandidates.push(regexCandidate);
 
-  const bestRuleCandidate = chooseStableFallback(evaluatedCandidates, tieBreakerPolicy);
+  // Leap 2: Thompson Sampling — use adaptive selection when multiple candidates are viable
+  let bestRuleCandidate = chooseStableFallback(evaluatedCandidates, tieBreakerPolicy);
+  if (!process.env.DISABLE_THOMPSON_SAMPLING) try {
+    const viableCandidates = evaluatedCandidates.filter(c => c.valid && c.qualitySummary.quality !== "low");
+    if (viableCandidates.length > 1) {
+      const thompsonResult = selectPlannerThompson(
+        viableCandidates.map(c => c.planner),
+        goalCategory
+      );
+      const thompsonPick = viableCandidates.find(c => c.planner === thompsonResult.selected);
+      if (thompsonPick) bestRuleCandidate = thompsonPick;
+    }
+  } catch { /* Thompson Sampling is optional */ }
   const provider = createPlannerFromEnv();
   const providerHealth = buildProviderHealth(provider, llmUsageCap);
   const plannerQuality: PlanQualitySummary["quality"] | "unknown" = bestRuleCandidate?.qualitySummary.quality ?? "unknown";
@@ -271,7 +373,8 @@ export async function planTasks(goal: string, options: PlanTasksOptions): Promis
     const llmBlueprints = await provider.plan({
       goal: trimmedGoal,
       recentRunsSummary: summarizeRecentRuns(recentRuns),
-      failurePatterns
+      failurePatterns,
+      episodeContext: options.episodeContext
     });
 
     if (!validateLLMPlannerOutput(llmBlueprints)) {

@@ -84,6 +84,7 @@ test("extractKnowledgeFromRun: stores failure lessons from failed tasks", () => 
         kind: "selector_drift",
         explanation: "Selector likely drifted.",
         confidence: 0.91,
+        belief: { alpha: 2, beta: 1 },
         suggestedExperiments: ["check selector presence"],
         recoveryHint: "Prefer visual fallback."
       }
